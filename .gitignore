@@ -1,0 +1,60 @@
+# =====================================================================
+# Python (bytecode, caches, builds)
+# =====================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging/build artifacts
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# =====================================================================
+# Jupyter
+# =====================================================================
+.ipynb_checkpoints/
+
+# =====================================================================
+# Visual Studio / Visual Studio Code
+# =====================================================================
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+.vscode/
+
+# =====================================================================
+# OS junk
+# =====================================================================
+Thumbs.db
+.DS_Store
+
+# =====================================================================
+# Project-local artifacts (ROOT-ONLY so they won't clash with src/...)
+# Customize these based on what you generate locally.
+# =====================================================================
+/logs/
+/outputs/
+/data/
+/runs/
+/artifacts/
+/checkpoints/
+
+# Secrets / local config
+.env
+.env.*
