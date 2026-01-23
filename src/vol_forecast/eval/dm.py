@@ -5,10 +5,12 @@ from vol_forecast.metrics import qlike_series_var
 
 
 def _normal_cdf(x: float) -> float:
+    """Standard normal CDF using erf."""
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 def newey_west_long_run_var(x: np.ndarray, lag: int) -> float:
+    """Newey-West long-run variance (Bartlett weights) for a 1D series."""
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
     n = len(x)
@@ -34,16 +36,9 @@ def dm_test_qlike_var_vs_baseline_holdout(
     min_n: int = 60,
 ) -> dict[str, float]:
     """
-    Minimal DM test on HOLDOUT only (OVERLAPPING daily sample):
-      - loss: QLIKE on variance, per time step
-      - compare: model_var_col vs baseline_var_col
-      - HAC: Newey-West long-run variance on the loss differential
-
-    Returns dict with:
-      n, dm_stat, p_value, mean_d
-    Convention:
-      d_t = loss_model_t - loss_baseline_t
-      Negative mean_d => model has LOWER loss (better) than baseline.
+    DM test on HOLDOUT using QLIKE variance loss differential:
+      d_t = loss_model - loss_baseline (mean_d < 0 -> model better).
+    Uses Newey-West HAC variance of d_t.
     """
     needed = [target_var_col, model_var_col, baseline_var_col]
     if any(c not in df_hold.columns for c in needed):
@@ -74,6 +69,10 @@ def dm_test_qlike_var_vs_baseline_holdout(
 
     dm_stat = d_mean / math.sqrt(lr_var / float(n2))
     p = 2.0 * (1.0 - _normal_cdf(abs(dm_stat)))
+    # p = math.erfc(abs(dm_stat) / math.sqrt(2.0))
+#     from statistics import NormalDist
+
+# p = 2.0 * NormalDist().cdf(-abs(dm_stat))
 
     return {"n": float(n2), "dm_stat": float(dm_stat), "p_value": float(p), "mean_d": float(d_mean)}
 
@@ -87,6 +86,12 @@ def dm_panel_qlike_vs_baseline_holdout(
     hac_lag_grid: list[int],
     min_n: int = 60,
 ) -> pd.DataFrame:
+    """
+    DM panel (QLIKE) for each model vs baseline over a HAC lag grid.
+
+    Sample policy: per model, DM is computed on the available intersection of
+    {target, baseline, model} (dropna). Panel includes `n` for transparency.
+    """
     cols = [c for c in model_var_cols if c in df_hold.columns and c != baseline_var_col]
     if baseline_var_col not in df_hold.columns or target_var_col not in df_hold.columns or len(cols) == 0:
         return pd.DataFrame()

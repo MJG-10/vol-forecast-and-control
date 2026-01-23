@@ -1,121 +1,78 @@
 import pandas as pd
 from typing import Any
 from vol_forecast.wf_config import WalkForwardConfig
-# from vol_forecast.data.vix import load_vix_close_series
 from vol_forecast.schema import COLS
-from vol_forecast.features import build_core_features
 from .experiment_pipeline import (fit_forecasts,
                                   build_wf_hold_panel,
                                   compute_eval_panels)
 from vol_forecast.strategy import run_strategy_holdout_cost_grid
-from vol_forecast.eval.data_quality import build_data_diagnostics
-from vol_forecast.data  import load_vix_close_series
-
+from vol_forecast.eval.data_quality import build_holdout_data_diagnostics
 
 
 def compute_experiment_report(
-    base: pd.DataFrame,
+    df: pd.DataFrame,
     *,
-    label: str,
     horizon: int,
     freq: int,
     wf_cfg: WalkForwardConfig,
-    sigma_target: float,
-    L_max: float,
-    tcost_grid_bps: list[float],
-    cash_daily_simple: pd.Series | None,
-    execution_lag_days: int = 1,
+    execution_lag_days: int = 0,
     garch_dist: str = "t",
     holdout_start_date: str = "2019-01-01",
     gjr_pneg_mode: str = "implied",
     hac_lag_grid: list[int] | None = None,
+    run_strategy: bool =  True, 
+    strategy_variants: list[str] | None = None,
+    sigma_target: float= 0.10,
+    tcost_grid_bps: list[float] | None = None,
 ) -> dict[str, Any]:
     """
-    Notebook-friendly compute pipeline.
-    No printing, no plotting, no file I/O.
-    Returns a 'report' dict with panels + tables + strategy outputs + metadata.
+    Builds features/targets, fits walk-forward forecasts, assembles holdout panel, 
+    computes eval panels (incl. DM), and optionally runs a vol-targeting strategy. 
+    Returns a dict of artifacts + meta. Pure compute (no I/O).
     """
     cfg = wf_cfg
-    ret_col = COLS.RET
 
-    core_cols = [
-        ret_col,
-        COLS.DAILY_VAR, COLS.RV20_VAR, COLS.RV20_FWD_VAR,
-        COLS.RW_FORECAST_VAR, COLS.EWMA_FORECAST_VAR,
-        *COLS.HAR_LOG_FEATURES,
-        COLS.LOG_TARGET_VAR,
-    ]
+    if tcost_grid_bps is None:
+        tcost_grid_bps = [0.0, 1.0, 2.0, 5.0, 10.0]
 
-    # -------------------------------------------------------------------------
-    # VIX: best-effort load (do not fail the pipeline if unavailable)
-    # -------------------------------------------------------------------------
-    # vix_close: pd.Series | None = None
-    # vix_error: str | None = None
+    if strategy_variants is None:
+        strategy_variants = ["daily", "tranche20"]
 
-    vix_close = load_vix_close_series(
-            start_date=str(base.index.min().date()),
-            end_date=None,
-        ).rename(COLS.VIX_CLOSE)
-        
-    core_cols.extend(COLS.VIX_FEATURES)
-
-
-    # except Exception as e:
-    #     vix_close = None
-    #     vix_error = str(e)
-    
-    # -------------------------------------------------------------------------
-    # Core features (single source of truth)
-    # -------------------------------------------------------------------------
-    df = base.copy()
-    df = build_core_features(
-        df,
-        ret_col=ret_col,
-        horizon=horizon,
-        freq=freq,
-        vix_close=vix_close,
-    )
+    if  hac_lag_grid is None:
+        hac_lag_grid = [20, 40, 60]
 
     baseline_col = COLS.EWMA_FORECAST_VAR
 
-    # -------------------------------------------------------------------------
+ 
     # Walk-forward forecasts
-    # -------------------------------------------------------------------------
-    forecasts, have_vix_cols = fit_forecasts(
+    forecasts = fit_forecasts(
         df,
         cfg=cfg,
         horizon=horizon,
-        active_ret_col=ret_col,
+        active_ret_col=COLS.RET,
         garch_dist=garch_dist,
         gjr_pneg_mode=gjr_pneg_mode,
     )
 
-    # -------------------------------------------------------------------------
-    # Build panel where target exists + holdout slice + strategy defaults
-    # -------------------------------------------------------------------------
-    wf_hold, model_cols_headline, strategy_signal_cols, n_vix_feat_holdout = build_wf_hold_panel(
+    # Build panel + holdout slice + strategy defaults
+    wf_hold, model_cols_headline, strategy_signal_cols = build_wf_hold_panel(
         df,
         forecasts=forecasts,
         baseline_col=baseline_col,
         holdout_start_date=holdout_start_date,
     )
 
-    data_diag = build_data_diagnostics(
-        df=df,
+    # Data diagnostics
+    data_diag = build_holdout_data_diagnostics(
         wf_hold=wf_hold,
-        ret_col=ret_col,
+        ret_col=COLS.RET,
         target_var_col=COLS.RV20_FWD_VAR,
         baseline_var_col=baseline_col,
         model_var_cols=model_cols_headline,
-        vix_close=vix_close,
-        cash_daily_simple=cash_daily_simple,
-        core_cols=core_cols,
-        warmup_core=200,
+        cash_col=COLS.CASH_R if run_strategy else None,
     )
 
-    # -------------------------------------------------------------------------
-    # Reports (pure eval functions) -> dict
-    # -------------------------------------------------------------------------
+    # Evaluation panels
     panels = compute_eval_panels(
         wf_hold,
         baseline_col=baseline_col,
@@ -123,43 +80,36 @@ def compute_experiment_report(
         hac_lag_grid=hac_lag_grid,
     )
 
-    # Effective HAC grid for meta (prefer dm.attrs, else the defaulting logic)
-    effective_hac_lag_grid = panels.get("dm", pd.DataFrame()).attrs.get("hac_lag_grid", None)
-    if effective_hac_lag_grid is None:
-        effective_hac_lag_grid = hac_lag_grid if hac_lag_grid is not None else [20, 40, 60]
+    # Strategy
+    strat_df = None
+    if run_strategy:
+        strat_df = run_strategy_holdout_cost_grid(
+            wf_hold,
+            return_col=COLS.RET,
+            cash_col = COLS.CASH_R,
+            signal_var_cols=strategy_signal_cols,
+            sigma_target=sigma_target,
+            horizon=horizon,
+            tcost_grid_bps=tcost_grid_bps,
+            execution_lag_days=execution_lag_days,
+            variants=strategy_variants,
+            freq=freq,
+        )
 
-    # -------------------------------------------------------------------------
-    # Strategy (pure; no printing inside strategy.py)
-    # -------------------------------------------------------------------------
-    strat_df = run_strategy_holdout_cost_grid(
-        wf_hold,
-        return_col=ret_col,
-        signal_var_cols=strategy_signal_cols,
-        cash_daily_simple=cash_daily_simple.reindex(wf_hold.index) if cash_daily_simple is not None else None,
-        sigma_target=sigma_target,
-        L_max=L_max,
-        horizon=horizon,
-        tcost_grid_bps=tcost_grid_bps,
-        execution_lag_days=execution_lag_days,
-        variants=["hold20", "tranche20"],
-        freq=freq,
-    )
-
-    # -------------------------------------------------------------------------
-    # Meta (inline)
-    # -------------------------------------------------------------------------
+    # Meta
     meta: dict[str, Any] = {
-        "label": label,
         "horizon": horizon,
         "freq": freq,
         "holdout_start_date": holdout_start_date,
-        "hac_lag_grid": list(effective_hac_lag_grid),
+        "hac_lag_grid": list(hac_lag_grid),
         "wf_cfg": {
-            "initial_train_frac": cfg.initial_train_frac,
             "window_type": cfg.window_type,
-            "rolling_w": cfg.rolling_w,
+            "initial_train_size": cfg.initial_train_size,
+            "rolling_window_size": cfg.rolling_window_size,
             "refit_every": cfg.refit_every,
-        },
+            "min_train_size": cfg.min_train_size,
+            "rolling_calendar_cap": cfg.rolling_calendar_cap
+        }
     }
 
     return {
@@ -167,7 +117,6 @@ def compute_experiment_report(
         "baseline_col": baseline_col,
         "model_cols_headline": model_cols_headline,
         "strategy_signal_cols": strategy_signal_cols,
-        # eval panels
         "data_diag": data_diag,
         "availability": panels["availability"],
         "headline_full": panels["headline_full"],
@@ -177,7 +126,6 @@ def compute_experiment_report(
         "xgb_sanity": panels["xgb_sanity"],
         "calibration": panels["calibration"],
         "dm": panels["dm"],
-        # strategy + meta
         "strategy": strat_df,
         "meta": meta,
     }

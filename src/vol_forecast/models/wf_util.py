@@ -1,33 +1,40 @@
-def get_train_slice(i: int, window_type: str, rolling_w: int) -> slice:
+from vol_forecast.wf_config import WalkForwardConfig
+
+
+def get_train_slice(i: int, window_type: str, rolling_window_size: int | None) -> slice:
     if window_type == "expanding":
         return slice(0, i)
     if window_type == "rolling":
-        start = max(0, i - rolling_w)
+        if rolling_window_size is None:
+            raise ValueError("rolling_window_size must be set in rolling mode")
+        start = max(0, i - rolling_window_size)
         return slice(start, i)
     raise ValueError("window_type must be 'expanding' or 'rolling'")
 
 
-def compute_train_end_excl(
-    pos: int,
-    *,
-    horizon: int,
-    min_train_end_excl: int = 51
-) -> int|None:
+def compute_start_pos(n_rows: int, cfg: WalkForwardConfig) -> int:
     """
-    Returns the exclusive training end index for a forecast at integer position `pos`.
+    Compute the first index position at which to attempt producing walk-forward forecasts.
 
-    Only allow training rows i whose forward label
-    window [i .. i+horizon-1] fully ends before `pos`. This implies:
-        train_end_excl = pos - horizon + 1
-
-    If not enough history (train_end_excl <= min_train_end_excl-1), return None (caller continues).
+    `n_rows` is the length of the aligned dataset after dropna (usable observations).
     """
-    train_end_excl = pos - horizon + 1
+    n_rows = int(n_rows)
+    if n_rows <= 0:
+        return 0
+    start = int(cfg.initial_train_size)
+    if start < 0:
+        start = 0
+    if start > n_rows:
+        start = n_rows
+    return start
 
-    if train_end_excl < min_train_end_excl:
-        return None
-
-    return train_end_excl
+def compute_train_end_excl(pos: int, *, horizon: int) -> int:
+    """
+    Exclusive training end index for forecast at position `pos`, enforcing overlap safety:
+    train indices i must satisfy i + horizon - 1 < pos  =>  i <= pos - horizon
+    so train_end_excl = pos - horizon + 1 (exclusive).
+    """
+    return max(0, pos - horizon + 1)
 
 
 def compute_purged_val_split(

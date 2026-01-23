@@ -3,14 +3,14 @@ import numpy as np
 from vol_forecast.schema import COLS, require_cols
 
 
-def forward_mean(series: pd.Series, horizon: int) -> pd.Series:
-    """
-    Forward looking rolling mean aligned at time t.
+# def forward_mean(series: pd.Series, horizon: int) -> pd.Series:
+#     """
+#     Forward looking rolling mean aligned at time t.
 
-    Computes: out[t] = mean(series[t], ..., series[t+horizon-1]).
-    """
-    # rolling() is backward-looking by default; shift aligns the mean to start at t.
-    return series.rolling(window=horizon).mean().shift(-(horizon - 1))
+#     Computes: out[t] = mean(series[t], ..., series[t+horizon-1]).
+#     """
+#     # rolling() is backward-looking by default; shift aligns the mean to start at t.
+#     return series.rolling(window=horizon).mean().shift(-(horizon - 1))
 
 
 def compute_daily_var_close(df: pd.DataFrame, ret_col: str) -> pd.Series:
@@ -23,9 +23,14 @@ def compute_trailing_annualized_var(daily_var: pd.Series, window: int = 20, freq
     return float(freq) * daily_var.rolling(window=window).mean()
 
 
+# def compute_forward_annualized_var(daily_var: pd.Series, horizon: int = 20, freq: int = 252) -> pd.Series:
+#     """Forward annualized variance target: freq * mean(daily_var over next `horizon` observations)."""
+#     return float(freq) * forward_mean(daily_var, horizon=horizon)
+
 def compute_forward_annualized_var(daily_var: pd.Series, horizon: int = 20, freq: int = 252) -> pd.Series:
-    """Forward annualized variance target: freq * mean(daily_var over next `horizon` observations)."""
-    return float(freq) * forward_mean(daily_var, horizon=horizon)
+    """Forward annualized variance target aligned at t: freq * mean(daily_var[t..t+h-1])."""
+    h = int(horizon)
+    return float(freq) * daily_var.rolling(window=h).mean().shift(-(h - 1))
 
 
 def add_vix_features_tminus1(df: pd.DataFrame, vix_close: pd.Series) -> pd.DataFrame:
@@ -126,7 +131,7 @@ def build_core_features(
     freq: int = 252,
     trailing_window: int = 20,
     ewma_alpha: float = 0.06,
-    vix_close: pd.Series | None = None,
+    vix_close: pd.Series = None,
     eps_log: float = 1e-18,
 ) -> pd.DataFrame:
     """
@@ -136,12 +141,8 @@ def build_core_features(
     project-wide column names via `COLS`. It does not drop rows.
     """
     out = df.copy()
-    print(out)
     # strict boundary check
     require_cols(df.columns, [ret_col], context="build_core_features")
-    # if ret_col not in df.columns:
-    #     raise ValueError(f"build_core_features: ret_col={ret_col!r} not found.")
-
 
     # 1) Variance proxy
     out[COLS.DAILY_VAR] = compute_daily_var_close(out, ret_col=ret_col)
@@ -168,12 +169,8 @@ def build_core_features(
     # 5) Log target
     out = add_log_target_var(out, target_var_col=COLS.RV20_FWD_VAR, eps=float(eps_log))
 
-    # 6) Optional VIX features
-    if vix_close is not None:
-        out = add_vix_features_tminus1(out, vix_close=vix_close)
-    # else:
-    #     out[COLS.LOG_VIX_LAG1] = np.nan
-    #     out[COLS.DLOG_VIX_5] = np.nan
+    # 6) VIX features
+    out = add_vix_features_tminus1(out, vix_close=vix_close)
 
     return out
 

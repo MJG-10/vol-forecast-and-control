@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 import pandas as pd
 
 
@@ -23,105 +24,109 @@ def _index_stats(df: pd.DataFrame) -> dict[str, object]:
     return out
 
 
-def _coverage_table(df: pd.DataFrame, *, cols: list[str], warmup: int) -> pd.DataFrame:
-    n = int(len(df))
-    warm = int(min(max(warmup, 0), n))
-    present = [c for c in cols if c in df.columns]
+def _coverage_table(
+    df: pd.DataFrame,
+    *,
+    cols: Sequence[str],
+    head_warmup: int = 0,
+    tail_cooldown: int = 0,
+) -> pd.DataFrame:
+    """
+    Coverage table for selected columns.
 
+    Computes coverage on:
+      - full sample
+      - interior slice that skips `head_warmup` rows at the start and `tail_cooldown` rows at the end
+
+    This avoids structural NaNs from rolling windows/feature lags (head) and forward targets (tail).
+    """
+    n = int(len(df))
+    start = int(min(max(head_warmup, 0), n))
+    end = int(min(max(n - int(tail_cooldown), start), n))
+
+    present = [c for c in cols if c in df.columns]
     rows: list[dict[str, object]] = []
+
     for c in present:
         s = df[c]
-        non = int(s.notna().sum())
-        pct = (non / n) if n else float("nan")
 
-        if warm >= n:
-            pct_after = float("nan")
-            n_after = 0
-        else:
-            tail = s.iloc[warm:]
-            n_after = int(len(tail))
-            non_after = int(tail.notna().sum())
-            pct_after = (non_after / n_after) if n_after else float("nan")
+        # Full sample
+        non_full = int(s.notna().sum())
+        pct_full = (non_full / n) if n else float("nan")
+
+        # Interior slice
+        s_in = s.iloc[start:end]
+        n_in = int(len(s_in))
+        non_in = int(s_in.notna().sum())
+        pct_in = (non_in / n_in) if n_in else float("nan")
 
         rows.append(
             {
                 "col": c,
-                "nonNaN": float(non),
-                "pct_nonNaN": float(pct),
-                "pct_nonNaN_after_warmup": float(pct_after),
-                "n_after_warmup": float(n_after),
+                "nonNaN_full": float(non_full),
+                "pct_nonNaN_full": float(pct_full),
+                "pct_nonNaN_interior": float(pct_in),
+                "n_interior": float(n_in),
+                "head_warmup": float(start),
+                "tail_cooldown": float(n - end),
             }
         )
 
     out = pd.DataFrame(rows)
     if len(out):
         out = out.sort_values(
-            ["pct_nonNaN_after_warmup", "pct_nonNaN"], ascending=[True, True]
+            ["pct_nonNaN_interior", "pct_nonNaN_full"], ascending=[True, True]
         ).reset_index(drop=True)
     return out
 
 
-def _aligned_series_row(
-    s: pd.Series | None,
+def build_core_data_diagnostics(
     *,
-    trading_index: pd.DatetimeIndex,
-    name: str,
+    df: pd.DataFrame,
+    core_cols: Sequence[str],
+    head_warmup: int = 22,
+    tail_cooldown: int = 0,
 ) -> dict[str, object]:
-    if s is None:
-        return {"name": name, "available": False}
-    x = s.reindex(trading_index)
+
     return {
-        "name": name,
-        "available": True,
-        "n": int(len(x)),
-        "nonNaN": int(x.notna().sum()),
-        "pct_nonNaN": float(x.notna().mean()) if len(x) else float("nan"),
+        "core_index": _index_stats(df),
+        "core_coverage": _coverage_table(
+            df,
+            cols=core_cols,
+            head_warmup=head_warmup,
+            tail_cooldown=tail_cooldown,
+        )
     }
 
 
-def build_data_diagnostics(
+def build_holdout_data_diagnostics(
     *,
-    df: pd.DataFrame,
     wf_hold: pd.DataFrame,
     ret_col: str,
     target_var_col: str,
     baseline_var_col: str,
     model_var_cols: list[str],
-    vix_close: pd.Series | None,
-    cash_daily_simple: pd.Series | None,
-    core_cols: list[str],
-    warmup_core: int = 200,
+    cash_col: str | None = None,
 ) -> dict[str, object]:
-    """
-    Single entry point: compute data completeness and alignment diagnostics.
+    hold_cols = [ret_col, target_var_col, baseline_var_col] + model_var_cols
 
-    Returns a dict with:
-      - core_index: dict
-      - holdout_index: dict
-      - core_coverage: DataFrame
-      - holdout_coverage: DataFrame
-      - aux_coverage: DataFrame (rows for vix/cash on df and holdout indices)
-    """
-    core_index = _index_stats(df)
-    hold_index = _index_stats(wf_hold)
-
-    core_coverage = _coverage_table(df, cols=core_cols, warmup=warmup_core)
-
-    hold_cols = [ret_col, target_var_col, baseline_var_col] + list(model_var_cols)
-    holdout_coverage = _coverage_table(wf_hold, cols=hold_cols, warmup=0)
-
-    aux_rows = [
-        _aligned_series_row(vix_close, trading_index=df.index, name="vix_close@df"),
-        _aligned_series_row(cash_daily_simple, trading_index=df.index, name="cash@df"),
-        _aligned_series_row(vix_close, trading_index=wf_hold.index, name="vix_close@holdout"),
-        _aligned_series_row(cash_daily_simple, trading_index=wf_hold.index, name="cash@holdout"),
-    ]
-    aux_coverage = pd.DataFrame(aux_rows)
-
-    return {
-        "core_index": core_index,
-        "holdout_index": hold_index,
-        "core_coverage": core_coverage,
-        "holdout_coverage": holdout_coverage,
-        "aux_coverage": aux_coverage,
+    out: dict[str, object] = {
+        "holdout_index": _index_stats(wf_hold),
+        "holdout_coverage": _coverage_table(
+            wf_hold,
+            cols=hold_cols,
+            head_warmup=0,
+            tail_cooldown=0,
+        ),
     }
+
+    if cash_col is not None:
+        out["cash_coverage_holdout"] = _coverage_table(
+            wf_hold,
+            cols=[cash_col],
+            head_warmup=0,
+            tail_cooldown=0,
+        )
+
+    return out
+

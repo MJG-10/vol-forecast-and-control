@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from vol_forecast.wf_config import WalkForwardConfig
 from arch import arch_model
-from .wf_util import get_train_slice
+from .wf_util import get_train_slice, compute_start_pos
 
 
 def _is_symmetric_dist(dist: str) -> bool:
@@ -22,6 +22,19 @@ def walk_forward_garch_family_var(
     dist: str = "t",
     gjr_pneg_mode: str = "implied",
 ) -> tuple[pd.Series, pd.Series, dict]:
+    """
+    Walk-forward GARCH-family variance forecasts (GARCH(1,1) or GJR-GARCH(1,1)).
+
+    - Fits on returns scaled by `ret_scale` (e.g., 100 for percent returns) for numerical stability.
+    - Produces an annualized variance forecast over `horizon` trading days by propagating the
+      conditional variance recursion and averaging the forward variance path.
+    - On fit failure / non-convergence, falls back to lagged trailing variance (`trailing_var_col`.shift(1))
+      and marks the timestamp as failed.
+
+    GJR asymmetry expectation:
+      - `gjr_pneg_mode="implied"` uses p_neg=0.5 for symmetric innovation distributions.
+      - `gjr_pneg_mode="empirical"` estimates p_neg from the training window (clipped) to reflect sign imbalance.
+    """
     kind = kind.lower()
     if kind not in ("garch", "gjr"):
         raise ValueError("kind must be 'garch' or 'gjr'")
@@ -40,28 +53,23 @@ def walk_forward_garch_family_var(
         "kind": kind,
         "dist": dist,
         "gjr_pneg_mode": gjr_pneg_mode,
-        "initial_train_frac": float(cfg.initial_train_frac),
         "n_rows": int(n2),
         "horizon": int(horizon),
-        "window_type": cfg.window_type,
-        "rolling_w": int(cfg.rolling_w),
-        "refit_every": int(cfg.refit_every),
         "ret_scale": float(ret_scale),
-        # filled later:
-        "initial_train_idx": None,
+        # updated later
         "n_refits": 0,
         "forecast_points": 0,
         "n_failures": 0,
         "failure_rate": float("nan"),
     }
 
-    # if n2 < 300:
-    if n2 < cfg.min_rows_total:
-        return out, failed, diag
+    # if n2 < cfg.min_total_size:
+    #     return out, failed, diag
 
-    initial_train_idx = int(cfg.initial_train_frac * n2)
-    diag["initial_train_idx"] = int(initial_train_idx)
+    start_pos = compute_start_pos(n2, cfg)
+    diag["start_pos"] = int(start_pos)
 
+    # We scale returns for stable estimation; forecasts are scaled back to variance units via (ret_scale**2).
     returns = df2[ret_col] * float(ret_scale)
     fallback_var = df2[trailing_var_col].shift(1)
 
@@ -75,18 +83,26 @@ def walk_forward_garch_family_var(
     n_fit = 0
     sym = _is_symmetric_dist(dist)
 
-    for pos in range(initial_train_idx, n2):
-        do_refit = (not fitted) or ((pos - initial_train_idx) % cfg.refit_every == 0)
+    for pos in range(start_pos, n2):
+        do_refit = (not fitted) or ((pos - start_pos) % cfg.refit_every == 0)
 
         if do_refit:
-            train_slice = get_train_slice(pos, cfg.window_type, cfg.rolling_w)
-            train_ret = returns.iloc[train_slice]
+            train_slice = get_train_slice(pos, cfg.window_type, cfg.rolling_window_size)
+            train = returns.iloc[train_slice]
             # to review, maybe best to remove
-            if len(train_ret) < cfg.min_train_rows:
+            # if len(train_ret) < cfg.min_train_rows:
+            #     continue
+
+            if cfg.window_type == "expanding":
+                required_min = cfg.initial_train_size 
+            else:
+                required_min = cfg.min_train_size
+
+            if len(train) < required_min:
                 continue
 
             am = arch_model(
-                train_ret,
+                train,
                 mean="Zero",
                 vol="GARCH",
                 p=1,
@@ -128,14 +144,15 @@ def walk_forward_garch_family_var(
                 continue
 
             h_prev = float(res.conditional_volatility.iloc[-1] ** 2)
-            eps_prev = float(train_ret.iloc[-1])
+            eps_prev = float(train.iloc[-1])
 
             if kind == "gjr":
                 if gjr_pneg_mode == "implied" and sym:
                     p_neg = 0.5
                 else:
-                    vals = train_ret.values.astype(float)
+                    vals = train.values.astype(float)
                     vals = vals[np.isfinite(vals)]
+                    # We clip empirical p_neg to avoid extreme gamma * p_neg effects in short/noisy samples.
                     p_neg = float(np.mean(vals < 0.0)) if len(vals) else 0.5
                     p_neg = float(np.clip(p_neg, 0.05, 0.95))
 
@@ -170,7 +187,7 @@ def walk_forward_garch_family_var(
             eps_prev = float(returns.iloc[pos])
             h_prev = float(h_t)
 
-    denom = max(1, (n2 - initial_train_idx))
+    denom = max(1, (n2 - start_pos))
     diag.update({
         "n_refits": int(n_fit),
         "forecast_points": int(denom),

@@ -1,5 +1,9 @@
 import pandas as pd
 from vol_forecast.wf_config import WalkForwardConfig
+from vol_forecast.data import (load_sp500_total_return_close,
+                               compute_log_returns_from_series,
+                               load_cash_daily_simple_act360,
+                               load_vix_close_series)
 from vol_forecast.features import build_core_features
 from vol_forecast.models.garch import walk_forward_garch_family_var
 from vol_forecast.models.har import walk_forward_log_har_var_generic
@@ -11,10 +15,76 @@ from vol_forecast.eval.reporting import (availability_summary_holdout,
                                          report_xgb_mean_median_sanity,
                                          calibration_spearman_holdout)
 from vol_forecast.eval.dm import dm_panel_qlike_vs_baseline_holdout
-
+from vol_forecast.eval.data_quality import build_core_data_diagnostics 
 from vol_forecast.utils import safe_cols
 from vol_forecast.schema import COLS
 from typing import Any
+
+
+def build_experiment_df(
+    *,
+    start_date: str = "1990-01-01",
+    end_date: str | None = None,
+    horizon: int = 20,
+    freq: int = 252
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Builds the experiment DataFrame.
+
+    Returns:
+      df: canonical DataFrame indexed by trading dates, including:
+          - COLS.RET
+          - COLS.CASH_R
+          - engineered columns from build_core_features(...)
+      meta: lightweight provenance info (sources + labels) and the raw VIX close series (if loaded).
+    """
+    # 1) Returns
+    label = "S&P 500 TOTAL RETURN"
+    tr_close = load_sp500_total_return_close(start_date=start_date, end_date=end_date)
+    ret = compute_log_returns_from_series(tr_close, out_name=COLS.RET, drop_nan=True)
+    df = ret.to_frame()
+
+    # 2) Cash proxy aligned to the same trading index
+    cash_r, cash_source = load_cash_daily_simple_act360(
+        start_date=str(df.index.min().date()),
+        end_date=end_date,
+        trading_index=df.index,
+        lag_trading_days=1,
+    )
+    df[COLS.CASH_R] = cash_r.reindex(df.index)
+
+    # 3) VIX close
+    vix_close, vix_source = load_vix_close_series(
+            start_date=str(df.index.min().date()),
+            end_date=end_date)
+
+    # 4) Feature/target engineering (does not drop rows)
+    df = build_core_features(
+        df,
+        ret_col=COLS.RET,
+        horizon=horizon,
+        freq=freq,
+        vix_close=vix_close,
+    )
+    df[COLS.VIX_CLOSE] = vix_close.reindex(df.index)
+
+    # 5) Data diagnostics
+    data_diag_core =  build_core_data_diagnostics(df=df,
+        core_cols=COLS.EXPERIMENT_CORE_COLS,
+        head_warmup=22,
+        tail_cooldown=max(0, horizon - 1)
+    )
+
+    meta: dict[str, Any] = {
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "cash_source": cash_source,
+        "vix_source": vix_source,
+        "data_diag_core": data_diag_core
+    }
+    return df, meta
+
 
 def fit_forecasts(
     df: pd.DataFrame,
@@ -24,13 +94,14 @@ def fit_forecasts(
     active_ret_col: str,
     garch_dist: str,
     gjr_pneg_mode: str,
-) -> tuple[dict[str, pd.Series], bool]:
+) -> dict[str, pd.Series]:
     """
-    Fit walk-forward models and return a dict of forecast series aligned to df.index.
-    Also returns have_vix_cols = whether engineered VIX feature columns exist in df.
+    Fits walk-forward forecast models and returns a dict of forecast variance series
+    aligned to `df.index` (HAR, XGB(HAR), XGB(HAR+VIX), GARCH, GJR for example).
     """
     forecasts: dict[str, pd.Series] = {}
 
+    # HAR
     har_daily = walk_forward_log_har_var_generic(
         df=df,
         feature_cols=list(COLS.HAR_LOG_FEATURES),
@@ -42,6 +113,7 @@ def fit_forecasts(
     ).reindex(df.index)
     forecasts["har_daily"] = har_daily
 
+    # XGB (HAR)
     xgb_har_med, xgb_har_mean = walk_forward_xgb_logtarget_var(
         df=df,
         features=list(COLS.HAR_LOG_FEATURES),
@@ -57,15 +129,9 @@ def fit_forecasts(
     forecasts["xgb_har_med"] = xgb_har_med.reindex(df.index)
     forecasts["xgb_har_mean"] = xgb_har_mean.reindex(df.index)
 
-    # HAR+VIX XGB is run iff build_core_features produced the engineered VIX columns.
-    have_vix_cols = all(c in df.columns for c in COLS.VIX_FEATURES)
-
-    xgb_harvix_med = pd.Series(index=df.index, dtype=float, name="xgb_harvix_wf_median_var")
-    xgb_harvix_mean = pd.Series(index=df.index, dtype=float, name="xgb_harvix_wf_mean_var")
-
-    if have_vix_cols:
-        xgb_feats_harvix = list(COLS.HAR_LOG_FEATURES + COLS.VIX_FEATURES)
-        xgb_harvix_med, xgb_harvix_mean = walk_forward_xgb_logtarget_var(
+    # XGB (HAR+VIX)
+    xgb_feats_harvix = list(COLS.HAR_LOG_FEATURES + COLS.VIX_FEATURES)
+    xgb_harvix_med, xgb_harvix_mean = walk_forward_xgb_logtarget_var(
             df=df,
             features=xgb_feats_harvix,
             target_var_col=COLS.RV20_FWD_VAR,
@@ -76,17 +142,14 @@ def fit_forecasts(
             name_prefix="xgb_harvix_wf",
             apply_lognormal_mean_correction=True,
             embargo=horizon,
-        )
-        xgb_harvix_med = xgb_harvix_med.reindex(df.index)
-        xgb_harvix_mean = xgb_harvix_mean.reindex(df.index)
+    )
+    xgb_harvix_med = xgb_harvix_med.reindex(df.index)
+    xgb_harvix_mean = xgb_harvix_mean.reindex(df.index)
 
     forecasts["xgb_harvix_med"] = xgb_harvix_med
     forecasts["xgb_harvix_mean"] = xgb_harvix_mean
-
-    garch_var = pd.Series(index=df.index, dtype=float, name="garch_wf_forecast_var")
-    gjr_var = pd.Series(index=df.index, dtype=float, name="gjr_wf_forecast_var")
-
    
+    # GARCH
     garch_var, _, _ = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
@@ -99,7 +162,7 @@ def fit_forecasts(
         )
     garch_var = garch_var.reindex(df.index)
 
-   
+   # GJR-GARCH
     gjr_var, _, _ = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
@@ -116,7 +179,7 @@ def fit_forecasts(
     forecasts["garch_var"] = garch_var
     forecasts["gjr_var"] = gjr_var
 
-    return forecasts, have_vix_cols
+    return forecasts
 
 
 def build_wf_hold_panel(
@@ -125,11 +188,13 @@ def build_wf_hold_panel(
     forecasts: dict[str, pd.Series],
     baseline_col: str,
     holdout_start_date: str,
-) -> tuple[pd.DataFrame, list[str], list[str], int]:
+) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
-    Assemble the target-available panel, add forecast columns, pick headline cols,
-    pick default signal for strategy, slice holdout, and compute VIX coverage diagnostic.
+    Constructs the target-available walk-forward panel, adds forecast columns,
+    selects model columns for evaluation and default signal columns for strategy,
+    then slices the holdout period starting at `holdout_start_date`.
     """
+    # We restrict to timestamps where the forward target is available.
     wf_df = df.loc[df[COLS.RV20_FWD_VAR].notna()].copy()
 
     wf_df["har_daily_wf_forecast_var"] = forecasts["har_daily"].reindex(wf_df.index)
@@ -154,13 +219,6 @@ def build_wf_hold_panel(
         ],
     )
 
-    # Default strategy signal selection:
-    # Use HAR+VIX XGB mean only if it has enough non-NaN coverage; else fallback to HAR-only XGB mean.
-    # prefer_harvix = (
-    #     "xgb_harvix_wf_mean_var" in wf_df.columns and wf_df["xgb_harvix_wf_mean_var"].notna().sum() > 200
-    # )
-    # default_xgb = "xgb_harvix_wf_mean_var" if prefer_harvix else "xgb_har_wf_mean_var"
-
     strategy_signal_cols = safe_cols(
         wf_df,
         [
@@ -176,13 +234,7 @@ def build_wf_hold_panel(
     hold_ts = pd.Timestamp(holdout_start_date)
     wf_hold = wf_df.loc[wf_df.index >= hold_ts].copy()
 
-    # Diagnostic only (no gating): engineered feature availability on holdout
-    if COLS.LOG_VIX_LAG1 in wf_hold.columns:
-        n_vix_feat_holdout = int(wf_hold[COLS.LOG_VIX_LAG1].notna().sum())
-    else:
-        n_vix_feat_holdout = 0
-
-    return wf_hold, model_cols_headline, strategy_signal_cols, n_vix_feat_holdout
+    return wf_hold, model_cols_headline, strategy_signal_cols
 
 
 def compute_eval_panels(
@@ -193,7 +245,8 @@ def compute_eval_panels(
     hac_lag_grid: list[int] | None,
 ) -> dict[str, Any]:
     """
-    Compute evaluation panels for holdout. Returns a dict to avoid tuple unpack fragility.
+    Computes holdout evaluation panels (availability, headline tables, calibration,
+    XGB sanity checks, and DM vs baseline). Returned as a dict for stable access.
     """
     availability = availability_summary_holdout(
         wf_hold,
@@ -212,6 +265,7 @@ def compute_eval_panels(
         min_n=60,
     )
 
+    # Stability check: we rerun headline metrics on two holdout halves to detect regime sensitivity.
     h1, h2, mid = split_holdout_into_halves(wf_hold)
 
     headline_half1 = pairwise_headline_table(
@@ -251,18 +305,20 @@ def compute_eval_panels(
         min_n=200,
     )
 
-    effective_hac = hac_lag_grid if hac_lag_grid is not None else [20, 40, 60]
+    # DM policy: for each model, we compute DM vs baseline on its own available sample
+    # (intersection of target/baseline/model). The DM panel reports sample size `n` 
+    # which we expect to be consistent across models. A common-sample policy can be adopted otherwise.
+
+    wf_hold_dm_base = wf_hold.dropna(subset=[COLS.RV20_FWD_VAR, baseline_col])
+
     dm = dm_panel_qlike_vs_baseline_holdout(
-        wf_hold.dropna(subset=[COLS.RV20_FWD_VAR, baseline_col]),
+        wf_hold_dm_base,
         target_var_col=COLS.RV20_FWD_VAR,
         model_var_cols=[c for c in model_cols_headline if c != baseline_col],
         baseline_var_col=baseline_col,
-        hac_lag_grid=effective_hac,
+        hac_lag_grid=hac_lag_grid,
         min_n=60,
     )
-
-    # Store effective grid for downstream meta recovery
-    dm.attrs["hac_lag_grid"] = list(effective_hac)
 
     return {
         "availability": availability,

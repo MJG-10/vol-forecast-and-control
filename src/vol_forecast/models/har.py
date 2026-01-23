@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 from vol_forecast.wf_config import WalkForwardConfig
 from vol_forecast.schema import require_cols
-from .wf_util import (compute_train_end_excl,
-                      get_train_slice)
-
+from .wf_util import (get_train_slice,
+                      compute_start_pos,
+                      compute_train_end_excl)
 import statsmodels.api as sm
 
 
@@ -21,7 +21,6 @@ def predict_log_har_var_generic(df: pd.DataFrame, model, sigma2: float, feature_
     X = X[model.model.exog_names]
     mu = model.predict(X)
     return np.exp(mu + 0.5 * sigma2)
-
 
 
 def walk_forward_log_har_var_generic(
@@ -42,28 +41,29 @@ def walk_forward_log_har_var_generic(
     needed = list(feature_cols) + [target_log_col, target_var_col]
     df2 = df.dropna(subset=needed).copy()
     n2 = len(df2)
-    if n2 < cfg.min_rows_total:
-        return out
 
-    initial_train_idx = int(cfg.initial_train_frac * n2)
+    # if n2 < cfg.min_total_size:
+    #     return out
+
+    start_pos = compute_start_pos(n2, cfg)
     model, sigma2 = None, 0.0
 
+    for pos in range(start_pos, n2):
+        train_end_excl = compute_train_end_excl(pos, horizon=horizon)
 
-    for pos in range(initial_train_idx, n2):
-        train_end_excl = compute_train_end_excl(
-            pos,
-            horizon=horizon,
-            min_train_end_excl=51
-        )
-        if train_end_excl is None:
-            continue
-
-        do_refit = (model is None) or ((pos - initial_train_idx) % cfg.refit_every == 0)
+        do_refit = (model is None) or ((pos - start_pos) % cfg.refit_every == 0)
         if do_refit:
-            train_slice = get_train_slice(train_end_excl, cfg.window_type, cfg.rolling_w)
+            train_slice = get_train_slice(train_end_excl, cfg.window_type, cfg.rolling_window_size)
             train = df2.iloc[train_slice]
-            if len(train) < cfg.min_train_rows:
+
+            if model is None or cfg.window_type == "expanding":
+                required_min = cfg.initial_train_size 
+            else:
+                required_min = cfg.min_train_size
+
+            if len(train) < required_min:
                 continue
+
             model, sigma2 = fit_log_har_var_generic(train, feature_cols=feature_cols, y_col=target_log_col)
 
         if model is None:

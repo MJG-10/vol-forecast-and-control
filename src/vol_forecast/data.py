@@ -1,16 +1,7 @@
 import pandas as pd 
+from pandas_datareader import data as pdr
 import yfinance as yf
 import numpy as np
-
-
-# Optional dependency: pandas_datareader enables higher quality cash rate benchmarks from FRED
-# (Federal Reserve Economic Data) such as SOFR, EFFR or DGS3MO. If unavailable, we just use Yahoo based
-# proxies (^IRX for ex) or a constant cash rate.
-try:
-    from pandas_datareader import data as pdr  # type: ignore
-    _HAS_PDR = True
-except Exception:
-    _HAS_PDR = False
 
 
 def _flatten_yahoo_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -139,8 +130,6 @@ def load_fred_series(series_id: str, start_date: str, end_date: str|None = None)
     """Loads a FRED time series via pandas_datareader and returns it as a float Series named according to
     the series_id parameter.
     """
-    if not _HAS_PDR:
-        raise RuntimeError("pandas_datareader not installed; cannot load FRED series.")
     end = end_date if end_date is not None else pd.Timestamp.today().strftime("%Y-%m-%d")
     df = pdr.DataReader(series_id, "fred", start_date, end)
     df = _standardize_time_index(df)
@@ -163,8 +152,7 @@ def load_cash_yield_irx(start_date: str = "1990-01-01", end_date: str | None = N
 
 def load_available_cash_rate_percent(
     start_date: str,
-    end_date: str | None,
-    prefer_fred: bool = True,
+    end_date: str | None
 ) -> tuple[pd.Series, str]:
     """
     Load an annualized cash-rate proxy as a percent *level* series (not returns).
@@ -172,17 +160,14 @@ def load_available_cash_rate_percent(
     Priority: FRED SOFR -> EFFR, else Yahoo ^IRX.
     Returns (series, source_label).
     """
-    last_err: str | None = None
-
-    if prefer_fred and _HAS_PDR:
-        for sid in ["SOFR", "EFFR"]:
-            try:
-                s = load_fred_series(sid, start_date=start_date, end_date=end_date).astype(float)
-                s = s.replace([np.inf, -np.inf], np.nan).dropna()
-                s.name = f"{sid}_percent"
-                return s, f"FRED:{sid}"
-            except Exception as e:
-                last_err = f"FRED:{sid} failed: {type(e).__name__}: {e}"
+    for sid in ["SOFR", "EFFR"]:
+        try:
+            s = load_fred_series(sid, start_date=start_date, end_date=end_date).astype(float)
+            s = s.replace([np.inf, -np.inf], np.nan).dropna()
+            s.name = f"{sid}_percent"
+            return s, f"FRED:{sid}"
+        except Exception as e:
+            last_err = f"FRED:{sid} failed: {type(e).__name__}: {e}"
 
     try:
         s = load_cash_yield_irx(start_date=start_date, end_date=end_date)
@@ -211,10 +196,10 @@ def cash_rate_percent_to_period_return_act360(
     """
     # First element is NaN because there is no prior period; caller may drop/fill as desired.
 
-    if not isinstance(index, pd.DatetimeIndex):
-        raise TypeError("index must be a DatetimeIndex")
-    if not isinstance(rate_percent.index, pd.DatetimeIndex):
-        raise TypeError("rate_percent must have a DatetimeIndex")
+    # if not isinstance(index, pd.DatetimeIndex):
+    #     raise TypeError("index must be a DatetimeIndex")
+    # if not isinstance(rate_percent.index, pd.DatetimeIndex):
+    #     raise TypeError("rate_percent must have a DatetimeIndex")
 
     # 1) Align the *rate level* to trading dates and forward-fill missing fixings/quotes.
     rp = rate_percent.astype(float).replace([np.inf, -np.inf], np.nan)
@@ -238,7 +223,6 @@ def load_cash_daily_simple_act360(
     start_date: str,
     end_date: str | None,
     trading_index: pd.DatetimeIndex,
-    prefer_fred: bool = True,
     lag_trading_days: int = 1,
 ) -> tuple[pd.Series, str]:
     """
@@ -250,8 +234,7 @@ def load_cash_daily_simple_act360(
     """
     rate_pct, src = load_available_cash_rate_percent(
         start_date=start_date,
-        end_date=end_date,
-        prefer_fred=prefer_fred,
+        end_date=end_date
     )
 
     cash_r = cash_rate_percent_to_period_return_act360(rate_pct, trading_index, 
@@ -261,30 +244,26 @@ def load_cash_daily_simple_act360(
     return cash_r, src
 
 
-def load_vix_close_series(start_date: str, end_date: str | None = None) -> pd.Series:
+def load_vix_close_series(start_date: str, end_date: str | None = None) -> tuple[pd.Series, str]:
     """VIX close level: prefers FRED (VIXCLS), otherwise falls back to Yahoo (^VIX).
-
-    Raises RuntimeError if both sources fail.
+    Returns series and source and raises RuntimeError if both sources fail.
     """
-    fred_err: str | None = None
-
-    if _HAS_PDR:
-        try:
-            s = load_fred_series("VIXCLS", start_date=start_date, end_date=end_date)
-            s.name = "vix_close"
-            return s
-        except Exception as e:
-            fred_err = f"FRED:VIXCLS failed: {type(e).__name__}: {e}"
+    try:
+        s = load_fred_series("VIXCLS", start_date=start_date, end_date=end_date)
+        s.name = "vix_close"
+        return s, "FRED:VIXCLS"
+    except Exception as e:
+         fred_err = f"FRED:VIXCLS failed: {type(e).__name__}: {e}"
 
     try:
         s2 = load_yahoo_close("^VIX", start_date=start_date, end_date=end_date, auto_adjust=False)
         s2.name = "vix_close"
-        return s2
+        return s2, "Yahoo:^VIX"
     except Exception as e2:
         yahoo_err = f"Yahoo:^VIX failed: {type(e2).__name__}: {e2}"
         msg = (
             "Failed to load VIX close series from both FRED and Yahoo. "
-            f"{fred_err + '; ' if fred_err else ''}{yahoo_err}"
+            f"{fred_err}; {yahoo_err}"
         )
         raise RuntimeError(msg) from e2
 
