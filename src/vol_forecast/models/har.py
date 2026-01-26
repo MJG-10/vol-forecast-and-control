@@ -32,6 +32,7 @@ def walk_forward_log_har_var_generic(
     horizon: int,
     out_name: str,
     cfg: WalkForwardConfig|None = None,
+    start_date: pd.Timestamp | None = None,
 ) -> pd.Series:
 
     cfg = cfg or WalkForwardConfig()
@@ -45,7 +46,13 @@ def walk_forward_log_har_var_generic(
     # if n2 < cfg.min_total_size:
     #     return out
 
-    start_pos = compute_start_pos(n2, cfg)
+    # start_pos = compute_start_pos(n2, cfg)
+    start_pos = compute_start_pos(
+        df2.index,
+        cfg=cfg,
+        n_rows=n2,
+        origin_start_date=start_date,
+    )
     model, sigma2 = None, 0.0
 
     for pos in range(start_pos, n2):
@@ -74,4 +81,3 @@ def walk_forward_log_har_var_generic(
         out.loc[df2.index[pos]] = float(pred)
 
     return out
-

@@ -1,5 +1,6 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
+
 
 @dataclass(frozen=True)
 class WalkForwardConfig:
@@ -16,49 +17,54 @@ class WalkForwardConfig:
     # rolling-only (must be set in rolling)
     rolling_window_size: int | None = 1000
     min_train_size: int | None = 500
-    rolling_calendar_cap: int | None = None
 
+    def __post_init__(self) -> None:
+        # Normalize window_type consistently
+        wt = str(self.window_type).lower().strip()
+        object.__setattr__(self, "window_type", wt)
 
-def validate_wf_config(cfg: WalkForwardConfig) -> None:
-    wt = str(cfg.window_type).lower().strip()
-    if wt not in ("rolling", "expanding"):
-        raise ValueError(f"window_type must be 'rolling' or 'expanding', got {cfg.window_type!r}")
+        # Validate core invariants
+        if int(self.refit_every) <= 0:
+            raise ValueError(f"refit_every must be > 0, got {self.refit_every}")
+        if int(self.initial_train_size) < 0:
+            raise ValueError(f"initial_train_size must be >= 0, got {self.initial_train_size}")
 
-    if int(cfg.refit_every) <= 0:
-        raise ValueError(f"refit_every must be > 0, got {cfg.refit_every}")
+        if wt not in ("rolling", "expanding"):
+            raise ValueError(f"window_type must be 'rolling' or 'expanding', got {self.window_type!r}")
 
-    if int(cfg.initial_train_size) < 0:
-        raise ValueError(f"initial_train_size must be >= 0, got {cfg.initial_train_size}")
+        # Normalize + validate mode-specific constraints
+        if wt == "expanding":
+            # In expanding mode, rolling-only fields are meaningless: force them to None
+            object.__setattr__(self, "rolling_window_size", None)
+            object.__setattr__(self, "min_train_size", None)
+            return
 
-    if wt == "rolling":
-        if cfg.rolling_window_size is None or int(cfg.rolling_window_size) <= 0:
-            raise ValueError(f"rolling_window_size must be set and > 0 in rolling mode, got {cfg.rolling_window_size}")
+        # rolling mode validations
+        if self.rolling_window_size is None or int(self.rolling_window_size) <= 0:
+            raise ValueError(
+                f"rolling_window_size must be set and > 0 in rolling mode, got {self.rolling_window_size}"
+            )
+        if self.min_train_size is None or int(self.min_train_size) <= 0:
+            raise ValueError(f"min_train_size must be set and > 0 in rolling mode, got {self.min_train_size}")
 
-        if cfg.min_train_size is None or int(cfg.min_train_size) <= 0:
-            raise ValueError(f"min_train_size must be set and > 0 in rolling mode, got {cfg.min_train_size}")
-
-        if cfg.initial_train_size > cfg.rolling_window_size:
+        if self.initial_train_size > self.rolling_window_size:
             raise ValueError(
                 "initial_train_size must be <= rolling_window_size in rolling mode "
-                f"(got initial_train_size={cfg.initial_train_size}, rolling_window_size={cfg.rolling_window_size})"
+                f"(got initial_train_size={self.initial_train_size}, rolling_window_size={self.rolling_window_size})"
             )
 
-        if cfg.min_train_size > cfg.rolling_window_size:
+        if self.min_train_size > self.rolling_window_size:
             raise ValueError(
                 "min_train_size must be <= rolling_window_size in rolling mode "
-                f"(got min_train_size={cfg.min_train_size}, rolling_window_size={cfg.rolling_window_size})"
+                f"(got min_train_size={self.min_train_size}, rolling_window_size={self.rolling_window_size})"
             )
 
-        if cfg.rolling_calendar_cap is not None and int(cfg.rolling_calendar_cap) <= 0:
-            raise ValueError(f"rolling_calendar_cap must be > 0 when set, got {cfg.rolling_calendar_cap}")
+        if self.min_train_size > self.initial_train_size:
+            raise ValueError(
+                "min_train_size must be <= initial_train_size "
+                f"(got min_train_size={self.min_train_size}, initial_train_size={self.initial_train_size})"
+            )
 
 
-def effective_wf_config(cfg: WalkForwardConfig) -> WalkForwardConfig:
-    """
-    Optional internal normalization for clarity.
-    In expanding mode, rolling-only fields are ignored; this returns a copy with them set to None.
-    """
-    validate_wf_config(cfg)
-    if cfg.window_type == "expanding":
-        return replace(cfg, rolling_window_size=None, min_train_size=None, rolling_calendar_cap=None)
-    return cfg
+    
+

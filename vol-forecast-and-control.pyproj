@@ -36,11 +36,13 @@
     <Compile Include="src\vol_forecast\models\wf_util.py" />
     <Compile Include="src\vol_forecast\models\xgb.py" />
     <Compile Include="src\vol_forecast\models\__init__.py" />
+    <Compile Include="src\vol_forecast\models_tuning\tuning_config.py" />
     <Compile Include="src\vol_forecast\runner\experiment.py" />
     <Compile Include="src\vol_forecast\runner\experiment_pipeline.py" />
     <Compile Include="src\vol_forecast\runner\report_io.py" />
     <Compile Include="src\vol_forecast\runner\runner_script.py" />
     <Compile Include="src\vol_forecast\runner\__init__.py" />
+    <Compile Include="src\vol_forecast\models_tuning\tuning.py" />
     <Compile Include="src\vol_forecast\utils.py" />
     <Compile Include="src\vol_forecast\wf_config.py" />
     <Compile Include="src\vol_forecast\data.py" />
@@ -55,6 +57,7 @@
     <Folder Include="src\vol_forecast\" />
     <Folder Include="src\vol_forecast\models\" />
     <Folder Include="src\vol_forecast\eval\" />
+    <Folder Include="src\vol_forecast\models_tuning\" />
     <Folder Include="src\vol_forecast\runner\" />
   </ItemGroup>
   <ItemGroup>

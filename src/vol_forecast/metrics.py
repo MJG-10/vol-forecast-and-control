@@ -37,12 +37,3 @@ def qlike_loss_var(v_true, v_pred, eps: float = 1e-12) -> float:
     s = qlike_series_var(v_true, v_pred, eps=eps)
     s = s[np.isfinite(s)]
     return float(np.mean(s)) if s.size else float("nan")
-
-
-def qlike_loss_var(v_true, v_pred, eps: float = 1e-12) -> float:
-    v_true = np.asarray(v_true, dtype=float)
-    v_pred = np.asarray(v_pred, dtype=float)
-    v_true = np.clip(v_true, eps, None)
-    v_pred = np.clip(v_pred, eps, None)
-    ratio = v_true / v_pred
-    return float(np.mean(ratio - np.log(ratio) - 1.0))

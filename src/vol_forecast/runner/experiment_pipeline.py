@@ -94,6 +94,8 @@ def fit_forecasts(
     active_ret_col: str,
     garch_dist: str,
     gjr_pneg_mode: str,
+    holdout_start_date: str | None = None,
+    xgb_params_overrides: dict[str, object] | None = None,
 ) -> dict[str, pd.Series]:
     """
     Fits walk-forward forecast models and returns a dict of forecast variance series
@@ -110,6 +112,7 @@ def fit_forecasts(
         horizon=horizon,
         out_name="har_daily_wf_forecast_var",
         cfg=cfg,
+        start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
     ).reindex(df.index)
     forecasts["har_daily"] = har_daily
 
@@ -124,12 +127,14 @@ def fit_forecasts(
         early_stopping_rounds=50,
         name_prefix="xgb_har_wf",
         apply_lognormal_mean_correction=True,
-        embargo=horizon,
+        start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
+        params_overrides=xgb_params_overrides, 
     )
     forecasts["xgb_har_med"] = xgb_har_med.reindex(df.index)
     forecasts["xgb_har_mean"] = xgb_har_mean.reindex(df.index)
 
     # XGB (HAR+VIX)
+    # We use the same tuned parameters for both XGB variants for simplcity.
     xgb_feats_harvix = list(COLS.HAR_LOG_FEATURES + COLS.VIX_FEATURES)
     xgb_harvix_med, xgb_harvix_mean = walk_forward_xgb_logtarget_var(
             df=df,
@@ -142,6 +147,8 @@ def fit_forecasts(
             name_prefix="xgb_harvix_wf",
             apply_lognormal_mean_correction=True,
             embargo=horizon,
+            start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
+            params_overrides=xgb_params_overrides,
     )
     xgb_harvix_med = xgb_harvix_med.reindex(df.index)
     xgb_harvix_mean = xgb_harvix_mean.reindex(df.index)
@@ -159,6 +166,7 @@ def fit_forecasts(
             cfg=cfg,
             ret_scale=100.0,
             dist=garch_dist,
+            start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
         )
     garch_var = garch_var.reindex(df.index)
 
@@ -173,6 +181,7 @@ def fit_forecasts(
             ret_scale=100.0,
             dist=garch_dist,
             gjr_pneg_mode=gjr_pneg_mode,
+            start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
         )
     gjr_var = gjr_var.reindex(df.index)
 

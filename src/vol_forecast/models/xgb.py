@@ -8,39 +8,35 @@ from .wf_util import (get_train_slice,
                       compute_train_end_excl, 
                       compute_purged_val_split)
 from vol_forecast.schema import require_cols
+from typing import Any
+from xgboost.core import XGBoostError
 
 
 def make_xgb_model(
     *,
-    early_stopping_rounds: int | None = 50,
+    early_stopping_rounds: int = 50,
     eval_metric: str = "rmse",
-    ) -> XGBRegressor:
-    params: dict[str, object] = dict(
+    params_overrides: dict[str, Any] | None = None,
+) -> XGBRegressor:
+    params: dict[str, Any] = dict(
         objective="reg:squarederror",
         n_estimators=2000,
         learning_rate=0.03,
         max_depth=3,
+        min_child_weight=1,   
         subsample=0.9,
         colsample_bytree=0.9,
+        early_stopping_rounds = int(early_stopping_rounds),
         random_state=0,
         tree_method="hist",
         n_jobs=-1,
         eval_metric=eval_metric,
     )
-    if early_stopping_rounds is not None:
-            params["early_stopping_rounds"] = int(early_stopping_rounds)
+
+    if params_overrides:
+        params.update(dict(params_overrides))
 
     return XGBRegressor(**params)
-
-
-def _winsorize(x: np.ndarray, q: float = 0.01) -> np.ndarray:
-    """Winsorize an array by clipping to the [p, 1-p] empirical quantiles."""
-    x = np.asarray(x, dtype=float)
-    x = x[np.isfinite(x)]
-    if len(x) < 5:
-        return x
-    lo, hi = np.quantile(x, [q, 1.0 - q])
-    return np.clip(x, lo, hi)
 
 
 def _xgb_predict_up_to_iter(model: XGBRegressor, X: pd.DataFrame, iter_inclusive: int) -> np.ndarray | None:
@@ -126,29 +122,29 @@ def walk_forward_xgb_logtarget_var(
     target_log_col: str,
     horizon: int,
     *,
-    cfg: WalkForwardConfig|None = None,
+    cfg: WalkForwardConfig | None = None,
     val_frac: float = 0.2,
     min_val_size: int = 250,
-    early_stopping_rounds: int|None = 50,
-    name_prefix: str = "xgb_wf",
+    early_stopping_rounds: int = 50,
     apply_lognormal_mean_correction: bool = True,
-    embargo: int = -1,
-    resid_winsor_q: float = 0.01,
-    var_eps_ewma_alpha: float = 0.20,
+    var_eps_ewma_alpha: float = 0.10,
+    mean_mult_cap: float | None = 2.5,
+    var_eps_min_updates: int = 50,
+    start_date: pd.Timestamp | None = None,
+    params_overrides: dict[str, object] | None = None,
+    name_prefix: str = "xgb_wf",
 ) -> tuple[pd.Series, pd.Series]:
     """
-    Walk-forward XGBoost forecaster for forward realized variance using a log-target.
+    Walk-forward XGBoost variance forecaster using a log-target.
 
-    Fits on `target_log_col` and produces two back-transformed variance forecasts:
-      - median_var = exp(mu_hat)
-      - mean_var   = exp(mu_hat + 0.5 * var_eps)
+    Fits on `target_log_col` (log forward variance) and returns:
+    - median_var = exp(mu_hat)
+    - mean_var   = exp(mu_hat + 0.5 * var_eps)
 
-    Here `var_eps` is an estimate of the residual variance in log-space computed on a
-    purged validation block (winsorized) and optionally smoothed via EWMA. This is a
-    pragmatic lognormal mean-correction to reduce bias when mapping from log-space.
-
-    Validation design: uses a contiguous train/embargo/val split, where `embargo`
-    enforces a gap to reduce leakage induced by overlapping forward-looking labels.
+    `var_eps` is an EWMA estimate of out-of-sample log-residual variance, updated only when a
+    forecast’s label matures after `horizon` steps (eps_t = y_t - mu_t). Until `var_eps_min_updates`
+    updates are available, mean_var defaults to median_var. If `mean_mult_cap` is not None, the mean
+    correction multiplier exp(0.5*var_eps) is capped at `mean_mult_cap`.
     """
     require_cols(df.columns, list(features) + [target_var_col, target_log_col], context="walk_forward_xgb_logtarget_var")
 
@@ -157,116 +153,113 @@ def walk_forward_xgb_logtarget_var(
     out_med = pd.Series(index=df.index, dtype=float, name=f"{name_prefix}_median_var")
     out_mean = pd.Series(index=df.index, dtype=float, name=f"{name_prefix}_mean_var")
 
-    # default embargo matches target overlap length
-    emb = horizon if embargo<0 else int(embargo)
-
     needed = list(features) + [target_log_col, target_var_col]
     df2 = df.dropna(subset=needed).copy()
     n2 = len(df2)
 
-    start_pos = compute_start_pos(n2, cfg)
+    start_pos = compute_start_pos(
+        df2.index,
+        cfg=cfg,
+        n_rows=n2,
+        origin_start_date=start_date,
+    )
+
     model: XGBRegressor | None = None
 
-    var_eps_smoothed = 0.0
-    have_var_eps = False
+    # lagged, out-of-sample log-residual moments 
+    mu_by_pos: dict[int, float] = {}
+    eps_mean_ewma = 0.0               
+    eps2_mean_ewma = 0.0               
+    eps_updates = 0                    
+
+    var_eps_cap = None
+    if mean_mult_cap is not None:
+        var_eps_cap = 2.0 * float(np.log(float(mean_mult_cap)))
+
 
     for pos in range(start_pos, n2):
-        train_end_excl = compute_train_end_excl(pos, horizon=horizon)
+        old_pos = pos - int(horizon)
+        mu_old = mu_by_pos.pop(old_pos, None)
+        if mu_old is not None and apply_lognormal_mean_correction:
+            
+            y_old = float(df2.iloc[old_pos][target_log_col])
+            eps = y_old - float(mu_old)
+            if np.isfinite(eps):
+                a = float(var_eps_ewma_alpha)
+                if eps_updates == 0:
+                    eps_mean_ewma = float(eps)
+                    eps2_mean_ewma = float(eps * eps)
+                else:
+                    eps_mean_ewma = (1.0 - a) * eps_mean_ewma + a * float(eps)
+                    eps2_mean_ewma = (1.0 - a) * eps2_mean_ewma + a * float(eps * eps)
+                eps_updates += 1
+
+        var_eps = 0.0
+        if apply_lognormal_mean_correction and eps_updates >= int(var_eps_min_updates):
+            var_eps = float(max(0.0, eps2_mean_ewma - eps_mean_ewma * eps_mean_ewma))
 
         do_refit = (model is None) or ((pos - start_pos) % cfg.refit_every == 0)
-     
-        var_eps = var_eps_smoothed # (var_eps_smoothed starts out at 0 above)
-        # if (apply_lognormal_mean_correction and have_var_eps) else 0.0
+        train_end_excl = compute_train_end_excl(pos, horizon=horizon)
 
         if do_refit:
             train_slice = get_train_slice(train_end_excl, cfg.window_type, cfg.rolling_window_size)
             train = df2.iloc[train_slice]
 
-            if model is None or cfg.window_type == "expanding":
-                required_min = cfg.initial_train_size 
-            else:
-                required_min = cfg.min_train_size
+            required_min = cfg.initial_train_size if (model is None or cfg.window_type == "expanding") else cfg.min_train_size
+            if len(train) >= required_min:
+                X_all = train[features]
+                y_all = train[target_log_col]
+                n_all = len(train)
 
-            if len(train) < required_min:
-                continue
+                split = compute_purged_val_split(
+                    n_all,
+                    val_frac=val_frac,
+                    min_val_size=min_val_size,
+                    embargo=horizon,
+                    min_train_size=100,
+                    min_val_points=50,
+                )
 
-            # if len(train_ret) < cfg.min_train_rows:
-            #     continue
+                if split is not None:
+                   
+                    split_end, val_size = split
+                    va_start = split_end + horizon
+                    va_end = va_start + val_size
 
-            X_all = train[features]
-            y_all = train[target_log_col]
-            n_all = len(train)
+                    X_tr = X_all.iloc[:split_end]
+                    y_tr = y_all.iloc[:split_end]
+                    X_va = X_all.iloc[va_start:va_end]
+                    y_va = y_all.iloc[va_start:va_end]
 
-            split = compute_purged_val_split(
-                n_all,
-                val_frac=val_frac,
-                min_val_size=min_val_size,
-                embargo=emb,
-                min_train_size=100,
-                min_val_points=50,
-            )
-            if split is None:
-                continue
+                    v_true_all = train[target_var_col].values.astype(float)
+                    v_va = v_true_all[va_start:va_end]
 
-            split_end, val_size = split
+                    if len(X_tr) >= 100 and len(X_va) >= 50:
+                        candidate = make_xgb_model(
+                            early_stopping_rounds=early_stopping_rounds,
+                            eval_metric="rmse",
+                            params_overrides=params_overrides,
+                        )
+                        try:
+                            candidate.fit(
+                                X_tr, y_tr,
+                                eval_set=[(X_va, y_va)],
+                                verbose=False,
+                                early_stopping_rounds=int(early_stopping_rounds),
+                            )
 
-            X_tr = X_all.iloc[:split_end]
-            y_tr = y_all.iloc[:split_end]
-
-            va_start = split_end + emb
-            va_end = va_start + val_size
-
-            X_va = X_all.iloc[va_start:va_end]
-            y_va = y_all.iloc[va_start:va_end]
-
-            v_true_all = train[target_var_col].values.astype(float)
-            v_va = v_true_all[va_start:va_end]
-
-            if len(X_tr) < 100 or len(X_va) < 50:
-                continue
-
-            model = make_xgb_model(early_stopping_rounds=early_stopping_rounds, eval_metric="rmse")
-            model.fit(
-                X_tr, y_tr,
-                eval_set=[(X_va, y_va)],
-                verbose=False,
-            )
-
-            # We select iteration by QLIKE on variance (aligned with evaluation loss), not just RMSE on log-target.
-            best_iter_qlike = select_best_iteration_by_qlike(
-                model,
-                X_va,
-                v_va,
-                max_iter=_get_best_iter_rmse(model),
-                grid_points=25,
-                min_iter=10,
-            )
-            setattr(model, "_best_iteration_qlike", best_iter_qlike)
-
-            if apply_lognormal_mean_correction:
-                # We estimate log-space residual variance on validation (winsorized) and smooth via EWMA to stabilize mean correction.
-
-                yhat_va = _predict_mu(model, X_va)
-                resid = (y_va.values.astype(float) - yhat_va.astype(float))
-                resid = resid[np.isfinite(resid)]
-
-                if len(resid) >= 30:
-                    resid_w = _winsorize(resid, q=float(resid_winsor_q))
-                    v_new = float(np.var(resid_w, ddof=1)) if len(resid_w) >= 30 else float("nan")
-                    v_new = v_new if (np.isfinite(v_new) and v_new > 0.0) else 0.0
-
-                    if not have_var_eps:
-                        var_eps_smoothed = v_new
-                        have_var_eps = True
-                    else:
-                        a = float(var_eps_ewma_alpha)
-                        var_eps_smoothed = (1.0 - a) * var_eps_smoothed + a * v_new
-
-                var_eps = var_eps_smoothed if have_var_eps else 0.0
-                # var_eps = var_eps_smoothed if (apply_lognormal_mean_correction and have_var_eps) else 0.0
-
-            else:
-                var_eps = 0.0
+                            best_iter_qlike = select_best_iteration_by_qlike(
+                                candidate,
+                                X_va,
+                                v_va,
+                                max_iter=_get_best_iter_rmse(candidate),
+                                grid_points=25,
+                                min_iter=10,
+                            )
+                            setattr(candidate, "_best_iteration_qlike", best_iter_qlike)
+                            model = candidate
+                        except (ValueError, FloatingPointError, XGBoostError):
+                            pass
 
         if model is None:
             continue
@@ -274,8 +267,17 @@ def walk_forward_xgb_logtarget_var(
         row = df2.iloc[[pos]]
         mu = float(_predict_mu(model, row[features])[0])
 
+        mu_by_pos[pos] = mu
+
         v_med = float(np.exp(mu))
         out_med.loc[df2.index[pos]] = v_med
-        out_mean.loc[df2.index[pos]] = float(np.exp(mu + 0.5 * var_eps)) if (apply_lognormal_mean_correction and var_eps > 0) else v_med
+        var_eps_eff = var_eps
+        if var_eps_cap is not None and var_eps_eff > var_eps_cap:
+            var_eps_eff = var_eps_cap
+
+        if apply_lognormal_mean_correction and var_eps_eff > 0.0:
+            out_mean.loc[df2.index[pos]] = float(np.exp(mu + 0.5 * var_eps_eff))
+        else:
+            out_mean.loc[df2.index[pos]] = v_med
 
     return out_med, out_mean

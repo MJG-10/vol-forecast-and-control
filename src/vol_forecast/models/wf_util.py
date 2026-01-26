@@ -1,3 +1,4 @@
+import pandas as pd
 from vol_forecast.wf_config import WalkForwardConfig
 
 
@@ -12,21 +13,34 @@ def get_train_slice(i: int, window_type: str, rolling_window_size: int | None) -
     raise ValueError("window_type must be 'expanding' or 'rolling'")
 
 
-def compute_start_pos(n_rows: int, cfg: WalkForwardConfig) -> int:
+def compute_start_pos(
+    idx: pd.DatetimeIndex,
+    *,
+    cfg: WalkForwardConfig,
+    n_rows: int,
+    origin_start_date: pd.Timestamp | None = None,
+) -> int:
     """
-    Compute the first index position at which to attempt producing walk-forward forecasts.
+    First origin position to forecast.
 
-    `n_rows` is the length of the aligned dataset after dropna (usable observations).
+    Combines:
+      (1) feasibility: at least cfg.initial_train_size usable rows (after dropna),
+      (2) optional boundary: do not forecast before origin_start_date.
+
+    If origin_start_date is not an exact index member, uses searchsorted (next available date).
     """
-    n_rows = int(n_rows)
-    if n_rows <= 0:
+    n = int(n_rows)
+    if n <= 0:
         return 0
-    start = int(cfg.initial_train_size)
-    if start < 0:
-        start = 0
-    if start > n_rows:
-        start = n_rows
-    return start
+
+    start_pos = int(cfg.initial_train_size)
+
+    if origin_start_date is not None:
+        ts = pd.Timestamp(origin_start_date)
+        start_pos = max(start_pos, int(idx.searchsorted(ts)))
+
+    return start_pos
+
 
 def compute_train_end_excl(pos: int, *, horizon: int) -> int:
     """

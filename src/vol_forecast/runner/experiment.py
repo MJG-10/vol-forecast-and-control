@@ -7,6 +7,9 @@ from .experiment_pipeline import (fit_forecasts,
                                   compute_eval_panels)
 from vol_forecast.strategy import run_strategy_holdout_cost_grid
 from vol_forecast.eval.data_quality import build_holdout_data_diagnostics
+from vol_forecast.runner.experiment import compute_experiment_report
+from vol_forecast.models_tuning.tuning import tune_xgb_params_pre_holdout
+from vol_forecast.data.build_experiment_df import build_experiment_df
 
 
 def compute_experiment_report(
@@ -24,6 +27,7 @@ def compute_experiment_report(
     strategy_variants: list[str] | None = None,
     sigma_target: float= 0.10,
     tcost_grid_bps: list[float] | None = None,
+    xgb_params_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Builds features/targets, fits walk-forward forecasts, assembles holdout panel, 
@@ -52,6 +56,8 @@ def compute_experiment_report(
         active_ret_col=COLS.RET,
         garch_dist=garch_dist,
         gjr_pneg_mode=gjr_pneg_mode,
+        holdout_start_date=holdout_start_date,
+        xgb_params_overrides=xgb_params_overrides,
     )
 
     # Build panel + holdout slice + strategy defaults
@@ -109,7 +115,7 @@ def compute_experiment_report(
             "refit_every": cfg.refit_every,
             "min_train_size": cfg.min_train_size,
             "rolling_calendar_cap": cfg.rolling_calendar_cap
-        }
+        },
     }
 
     return {
@@ -129,3 +135,80 @@ def compute_experiment_report(
         "strategy": strat_df,
         "meta": meta,
     }
+
+
+def run_experiment(
+    *,
+    start_date: str,
+    end_date: str | None,
+    horizon: int,
+    freq: int,
+    wf_cfg: WalkForwardConfig,
+    sigma_target: float,
+    tcost_grid_bps: list[float] | None,
+    garch_dist: str = 't',
+    holdout_start_date: str,
+    gjr_pneg_mode: str = 'implied',
+    tuning_blocks: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
+    hac_lag_grid: list[int] | None,
+    run_strategy: bool,
+    strategy_variants: list[str] | None,
+    do_xgb_tuning: bool = False,
+) -> dict[str, Any]:
+    """
+    Atomic experiment entrypoint: builds data, optionally tunes XGB strictly pre-holdout,
+    runs compute_experiment_report, and returns a self-contained report dict.
+    """
+    # 1) Build canonical experiment dataframe
+    base_df, build_meta = build_experiment_df(
+        start_date=start_date,
+        end_date=end_date,
+        horizon=horizon,
+        freq=freq,
+    )
+
+    # 2) Optional tuning (defaults live in tuning.py)
+    xgb_params_overrides: dict[str, Any] | None = None
+    xgb_tuning: dict[str, Any] = {"status": "not_run", "best": None, "table": None}
+
+    if do_xgb_tuning:
+        best_meta, tune_table = tune_xgb_params_pre_holdout(
+            df=base_df,
+            holdout_start=pd.Timestamp(holdout_start_date),
+            horizon=horizon,
+            cfg=wf_cfg,
+            blocks = tuning_blocks,
+        )
+        xgb_params_overrides = best_meta["best_params_overrides"]
+
+        xgb_tuning = {
+            "status": "ran",
+            "best": best_meta,
+            "table": tune_table.to_dict(orient="records"),
+        }
+
+    # 3) Compute report (pure)
+    report = compute_experiment_report(
+        base_df,
+        horizon=horizon,
+        freq=freq,
+        wf_cfg=wf_cfg,
+        garch_dist=garch_dist,
+        holdout_start_date=holdout_start_date,
+        gjr_pneg_mode=gjr_pneg_mode,
+        hac_lag_grid=hac_lag_grid,
+        run_strategy=run_strategy,
+        strategy_variants=strategy_variants,
+        sigma_target=sigma_target,
+        tcost_grid_bps=tcost_grid_bps,
+        xgb_params_overrides=xgb_params_overrides,
+    )
+
+    report["build_meta"] = build_meta
+    report["tuning"] = {"xgb": xgb_tuning}
+
+    meta = report["meta"] 
+    meta["final_xgb_params"] = xgb_params_overrides
+    meta["xgb_tuning_status"] = xgb_tuning["status"]
+
+    return report

@@ -21,6 +21,7 @@ def walk_forward_garch_family_var(
     ret_scale: float = 100.0,
     dist: str = "t",
     gjr_pneg_mode: str = "implied",
+    start_date: pd.Timestamp | None = None,
 ) -> tuple[pd.Series, pd.Series, dict]:
     """
     Walk-forward GARCH-family variance forecasts (GARCH(1,1) or GJR-GARCH(1,1)).
@@ -66,8 +67,15 @@ def walk_forward_garch_family_var(
     # if n2 < cfg.min_total_size:
     #     return out, failed, diag
 
-    start_pos = compute_start_pos(n2, cfg)
+    # start_pos = compute_start_pos(n2, cfg)
+    start_pos = compute_start_pos(
+        df2.index,
+        cfg=cfg,
+        n_rows=n2,
+        origin_start_date=start_date,
+    )
     diag["start_pos"] = int(start_pos)
+    # start_pos = max(start_pos, initial_train_idx)
 
     # We scale returns for stable estimation; forecasts are scaled back to variance units via (ret_scale**2).
     returns = df2[ret_col] * float(ret_scale)
