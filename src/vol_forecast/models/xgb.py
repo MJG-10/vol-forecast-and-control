@@ -205,7 +205,7 @@ def walk_forward_xgb_logtarget_var(
             train_slice = get_train_slice(train_end_excl, cfg.window_type, cfg.rolling_window_size)
             train = df2.iloc[train_slice]
 
-            required_min = cfg.initial_train_size if (model is None or cfg.window_type == "expanding") else cfg.min_train_size
+            required_min = cfg.initial_train_size if cfg.window_type == "expanding" else cfg.min_train_size
             if len(train) >= required_min:
                 X_all = train[features]
                 y_all = train[target_log_col]

@@ -84,7 +84,6 @@ def compute_purged_val_split(
     split_end = n_all - (val_size + embargo)
 
     if split_end < min_train_size:
-        # Try to salvage by shrinking validation while keeping min_train_size and embargo
         val_size2 = n_all - (min_train_size + embargo)
         if val_size2 < min_val_points:
             return None

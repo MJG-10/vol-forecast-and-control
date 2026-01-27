@@ -157,10 +157,9 @@ def fit_forecasts(
     forecasts["xgb_harvix_mean"] = xgb_harvix_mean
    
     # GARCH
-    garch_var, _, _ = walk_forward_garch_family_var(
+    garch_var = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
-            trailing_var_col=COLS.RV20_VAR,
             kind="garch",
             horizon=horizon,
             cfg=cfg,
@@ -171,10 +170,9 @@ def fit_forecasts(
     garch_var = garch_var.reindex(df.index)
 
    # GJR-GARCH
-    gjr_var, _, _ = walk_forward_garch_family_var(
+    gjr_var = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
-            trailing_var_col=COLS.RV20_VAR,
             kind="gjr",
             horizon=horizon,
             cfg=cfg,
