@@ -59,7 +59,7 @@ pip install -e ".[full,dev]"
 In the results notebook, we run the workflow step by step:
 
 - Build the canonical experiment dataframe `df` (data loading + return construction + feature/target engineering).
-- (Optional) Run XGB pre-holdout tuning to choose among a small fixed set of parameter candidates.
+- (Optional) Run XGB pre-holdout tuning to choose among a small fixed set of parameter candidates. Candidates are scored by QLIKE on the full pre-holdout tuning window; if the user provides date blocks (pre-holdout sub-period ranges), selection is instead based on the median block QLIKE (tie-broken by worst-block).
 - Run `compute_experiment_report(df, ...)` to produce the report dictionary (tables/panels + metadata) used by the notebook.
 
 The notebook-friendly wrapper `run_experiment(...)` performs the same workflow in one call and returns a report dictionary containing the evaluation panels/tables and metadata without plotting or printing anything.
@@ -73,11 +73,6 @@ For an end-to-end run that produces console output and optional plots.
 Path: `src/vol_forecast/runner/runner_script.py`
 
 This script is a convenience wrapper around the compute pipeline and emits console output and optional plots.
-
-
-## Optional: XGB pre-holdout tuning
-
-An optional pre-holdout tuning step can select among a small fixed set of XGB parameter candidates using only data strictly before the holdout start. Candidates are scored by QLIKE (and can optionally be scored by median block QLIKE when block scoring is enabled). 
 
 ## Repository layout
 
