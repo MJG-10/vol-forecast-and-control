@@ -1,4 +1,4 @@
-\# vol-forecast-and-control
+# vol-forecast-and-control
 
 In this project we implement a walk-forward experiment to forecast volatility for equity index returns (default here is S&P 500 Total Return). We evaluate multiple models using loss-based diagnostics during a holdout period and also feed these forecasts into an optional volatility-targeting backtest with transaction cost sensitivity.
 
