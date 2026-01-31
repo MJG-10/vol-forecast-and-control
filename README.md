@@ -103,7 +103,7 @@ This script is a convenience wrapper around the compute pipeline and emits conso
 
 Equity index series: Loaded from Yahoo via `yfinance` (default: `^SP500TR`).
 
-VIX: FRED `VIXCLS`.
+VIX: FRED `VIXCLS` (via `pandas_datareader`).
 
 Cash proxy: FRED `DFF` spliced/overwritten with `EFFR` when available, converted to per-period simple returns using ACT/360 conventions and aligned with a 1-trading-day lag.
 
