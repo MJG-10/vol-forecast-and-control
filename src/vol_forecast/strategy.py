@@ -80,7 +80,7 @@ def simulate_vol_control_strategy(
     variant: str = "daily",
     k: int = 20,
     tcost_bps: float = 0.0,
-    execution_lag_days: int = 1,
+    execution_lag_days: int = 0,
 ) -> tuple[pd.Series, pd.Series]:
     """
     Returns:
@@ -109,8 +109,6 @@ def simulate_vol_control_strategy(
     df = df.dropna(subset=["L_exec"])
 
     r_sp = np.expm1(df["ret"])
-
-    # r_cash = df["cash_r"].values.astype(float)
     r_cash = df["cash_r"].to_numpy(dtype=float)
     
     strat_simple = df["L_exec"] * r_sp + (1.0 - df["L_exec"]) * r_cash

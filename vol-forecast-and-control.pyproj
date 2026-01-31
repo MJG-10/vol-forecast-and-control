@@ -43,7 +43,8 @@
     <Compile Include="src\vol_forecast\runner\runner_script.py" />
     <Compile Include="src\vol_forecast\runner\__init__.py" />
     <Compile Include="src\vol_forecast\models_tuning\tuning.py" />
-    <Compile Include="src\vol_forecast\utils.py" />
+    <Compile Include="src\vol_forecast\df_utils.py" />
+    <Compile Include="src\vol_forecast\time_utils.py" />
     <Compile Include="src\vol_forecast\wf_config.py" />
     <Compile Include="src\vol_forecast\data.py" />
     <Compile Include="src\vol_forecast\features.py" />

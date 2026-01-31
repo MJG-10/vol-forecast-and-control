@@ -40,7 +40,7 @@ def make_xgb_model(
 
 
 def _xgb_predict_up_to_iter(model: XGBRegressor, X: pd.DataFrame, iter_inclusive: int) -> np.ndarray | None:
-    """Predicts using the first `n_estimators` trees (handles XGBoost version differences)."""
+    """Predicts using trees [0, iter_inclusive] via iteration_range; returns None if unsupported."""
     it = int(iter_inclusive)
     try:
         return model.predict(X, iteration_range=(0, it + 1))
@@ -49,7 +49,7 @@ def _xgb_predict_up_to_iter(model: XGBRegressor, X: pd.DataFrame, iter_inclusive
 
 
 def _get_best_iter_rmse(model: XGBRegressor) -> int | None:
-    """Extracts the best iteration from the XGBoost early-stopping state; returns 0 if unavailable."""
+    """Returns early-stopping best iteration (RMSE). None if not available."""
     best_iter = getattr(model, "best_iteration", None)
     if best_iter is None:
         best_iter = getattr(model, "best_iteration_", None)
@@ -65,10 +65,7 @@ def select_best_iteration_by_qlike(
     grid_points: int = 25,
     min_iter: int = 10,
 ) -> int | None:
-    """
-    Selects the tree iteration that minimizes QLIKE on variance forecasts over a validation set,
-    using exp(log_pred) as the back-transform.
-    """
+    """Chooses iteration that minimizes QLIKE on v_true vs exp(mu_pred) over the validation slice."""
     v_true_va = np.asarray(v_true_va, dtype=float)
     if len(v_true_va) < 50:
         return None
@@ -103,10 +100,7 @@ def select_best_iteration_by_qlike(
 
 
 def _predict_mu(model: XGBRegressor, X: pd.DataFrame) -> np.ndarray:
-    """
-    Predicts log-variance mean `mu` using QLIKE-selected iteration if present;
-    otherwise falls back to model.predict(X).
-    """
+    """Predicts mu (log variance) using QLIKE-selected iteration if set; else use model.predict."""
     it = getattr(model, "_best_iteration_qlike", None)
     if it is not None:
         mu = _xgb_predict_up_to_iter(model, X, int(it))
@@ -135,16 +129,17 @@ def walk_forward_xgb_logtarget_var(
     name_prefix: str = "xgb_wf",
 ) -> tuple[pd.Series, pd.Series]:
     """
-    Walk-forward XGBoost variance forecaster using a log-target.
+    Walk-forward XGB on log forward-variance.
 
-    Fits on `target_log_col` (log forward variance) and returns:
-    - median_var = exp(mu_hat)
-    - mean_var   = exp(mu_hat + 0.5 * var_eps)
+    Refit every cfg.refit_every using data up to (pos - horizon). If a purged
+    validation split exists, fit with RMSE early stopping and optionally pick a
+    tree iteration by minimizing QLIKE on exp(mu) over the validation slice.
 
-    `var_eps` is an EWMA estimate of out-of-sample log-residual variance, updated only when a
-    forecast’s label matures after `horizon` steps (eps_t = y_t - mu_t). Until `var_eps_min_updates`
-    updates are available, mean_var defaults to median_var. If `mean_mult_cap` is not None, the mean
-    correction multiplier exp(0.5*var_eps) is capped at `mean_mult_cap`.
+    Returns:
+      - out_med: exp(mu) (median variance).
+      - out_mean: exp(mu + 0.5*var_eps_eff) if enabled and var_eps is ready; else out_med.
+    var_eps is EWMA variance of matured log residuals eps = y - mu (available after horizon),
+    optionally capped via mean_mult_cap.
     """
     require_cols(df.columns, list(features) + [target_var_col, target_log_col], context="walk_forward_xgb_logtarget_var")
 
@@ -244,8 +239,7 @@ def walk_forward_xgb_logtarget_var(
                             candidate.fit(
                                 X_tr, y_tr,
                                 eval_set=[(X_va, y_va)],
-                                verbose=False,
-                                early_stopping_rounds=int(early_stopping_rounds),
+                                verbose=False
                             )
 
                             best_iter_qlike = select_best_iteration_by_qlike(

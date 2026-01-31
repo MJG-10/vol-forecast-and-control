@@ -5,8 +5,7 @@ from vol_forecast.models_tuning import tuning
 from vol_forecast.wf_config import WalkForwardConfig
 from vol_forecast.runner.report_io import (console_report, 
                                            save_report_csvs, plot_report)
-from vol_forecast.wf_config import validate_wf_config
-from vol_forecast.experiment import run_experiment
+from vol_forecast.runner.experiment import run_experiment
 
 
 def main_runner(
@@ -61,8 +60,6 @@ def main() -> None:
         min_train_size = 500,
         refit_every=60,
     )
-    validate_wf_config(wf_cfg)
-
   
     data_start_date = "2004-01-01"
     data_end_date = None
@@ -79,7 +76,7 @@ def main() -> None:
     ("2005-01-01", "2006-12-31"),
     ("2008-01-01", "2009-12-31"),
     ("2011-01-01", "2012-12-31"),
-    ("2014-01-01", "2015-06-30"),
+    ("2013-06-01", "2014-11-30"),
     ]
 
     xgb_tuning_blocks  = [(pd.Timestamp(s), pd.Timestamp(e)) for s, e in xgb_tuning_block_dates]
@@ -93,7 +90,7 @@ def main() -> None:
         holdout_start_date=holdout_start_date,
         sigma_target=sigma_target,
         tcost_grid_bps=tcost_grid_bps,
-        tuning_blocks = xgb_tuning_blocks,
+        tuning_blocks=xgb_tuning_blocks,
         out_dir=out_dir,
         do_plots=do_plots,
     )

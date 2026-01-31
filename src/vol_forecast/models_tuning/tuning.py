@@ -14,7 +14,7 @@ from vol_forecast.metrics import qlike_loss_var
 from vol_forecast.wf_config import WalkForwardConfig
 from vol_forecast.schema import COLS
 from vol_forecast.models.xgb import walk_forward_xgb_logtarget_var
-from .tuning.tuning_config import DEFAULT_XGB_CANDIDATE_OVERRIDES, DEFAULT_XGB_TUNE_VAL_DAYS
+from .tuning_config import DEFAULT_XGB_CANDIDATE_OVERRIDES, DEFAULT_XGB_TUNE_VAL_DAYS
 
 
 @dataclass(frozen=True)
@@ -40,14 +40,20 @@ class TuneWindow:
 
         # position of holdout start in the trading calendar
         pos_H = int(idx.searchsorted(self.holdout_start))
-        if pos_H >= len(idx) or idx[pos_H] != self.holdout_start:
-            raise ValueError("holdout_start must be an element of the index")
+        if pos_H >= len(idx):
+            raise ValueError(
+                f"holdout_start={pd.Timestamp(self.holdout_start).date()} is after the last index date."
+            )
 
         # Last tuning origin date: strictly before holdout, and with forward window ending before holdout.
         # target window length is horizon trading days, spanning [t, t+h-1].
         pos_tune_end = pos_H - (self.horizon - 1) - 1
         if pos_tune_end <= 0:
-            raise ValueError("Not enough pre-holdout history for boundary embargo")
+            holdout_eff = idx[pos_H]
+            raise ValueError(
+                f"Not enough pre-holdout history for embargo: effective holdout boundary is {holdout_eff.date()} "
+                f"with horizon={self.horizon}. Need more history before holdout_start."
+            )
 
         tune_val_end = idx[pos_tune_end]
 
@@ -76,8 +82,7 @@ def forecast_xgb_mean_var(
         target_log_col=COLS.LOG_TARGET_VAR,
         horizon=horizon,
         cfg=cfg,
-        embargo=horizon,
-        start_date=None,  # forecast across history; tuner masks strictly pre-holdout
+        start_date=None,
         params_overrides=overrides,
         name_prefix="xgb_tune",
         apply_lognormal_mean_correction=apply_lognormal_mean_correction,
@@ -112,11 +117,23 @@ def tune_xgb_params_pre_holdout(
 
     tune_val_start, tune_val_end = tw.compute_dates(df.index)
     if blocks is not None:
+        idx = df.index
         for s, e in blocks:
-            if pd.Timestamp(e) > tune_val_end:
+            e_ts = pd.Timestamp(e)
+
+            # Effective block end on the trading calendar: last index date <= requested e
+            pos_e = int(idx.searchsorted(e_ts, side="right")) - 1
+            if pos_e < 0:
                 raise ValueError(
-                    f"Block end {pd.Timestamp(e).date()} exceeds last safe tuning date "
-                    f"{tune_val_end.date()} given holdout_start={holdout_start.date()} and horizon={horizon}."
+                    f"Block end {e_ts.date()} is before the first index date {idx[0].date()} "
+                    f"(block is entirely out of range)."
+                )
+            e_eff = idx[pos_e]
+
+            if e_eff > tune_val_end:
+                raise ValueError(
+                    f"Invalid tuning block ({pd.Timestamp(s).date()}..{e_ts.date()}): "
+                    f"must be strictly pre-holdout under horizon embargo (end>{tune_val_end.date()})."
                 )
 
 
@@ -161,7 +178,7 @@ def tune_xgb_params_pre_holdout(
             if n_b < int(min_block_n):
                 score_b = float("inf")
             else:
-                score_b = qlike_loss_var(...)(sub["y"], sub["p"])
+                score_b = qlike_loss_var(sub["y"], sub["p"])
                 if not np.isfinite(score_b):
                     score_b = float("inf")
             block_scores.append(score_b)

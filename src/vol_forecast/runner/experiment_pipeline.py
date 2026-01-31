@@ -16,7 +16,7 @@ from vol_forecast.eval.reporting import (availability_summary_holdout,
                                          calibration_spearman_holdout)
 from vol_forecast.eval.dm import dm_panel_qlike_vs_baseline_holdout
 from vol_forecast.eval.data_quality import build_core_data_diagnostics 
-from vol_forecast.utils import safe_cols
+from vol_forecast.df_utils import safe_cols
 from vol_forecast.schema import COLS
 from typing import Any
 
@@ -29,14 +29,11 @@ def build_experiment_df(
     freq: int = 252
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
-    Builds the experiment DataFrame.
+    Builds the canonical experiment DataFrame indexed by trading dates.
 
     Returns:
-      df: canonical DataFrame indexed by trading dates, including:
-          - COLS.RET
-          - COLS.CASH_R
-          - engineered columns from build_core_features(...)
-      meta: lightweight provenance info (sources + labels) and the raw VIX close series (if loaded).
+      df: includes COLS.RET, COLS.CASH_R, and engineered columns from build_core_features(...)
+      meta: provenance (labels/sources) and core data diagnostics
     """
     # 1) Returns
     label = "S&P 500 TOTAL RETURN"
@@ -44,18 +41,18 @@ def build_experiment_df(
     ret = compute_log_returns_from_series(tr_close, out_name=COLS.RET, drop_nan=True)
     df = ret.to_frame()
 
-    # 2) Cash proxy aligned to the same trading index
+    # 2) Cash proxy aligned to trading index (ACT/360 accrual over calendar-day gaps)
     cash_r, cash_source = load_cash_daily_simple_act360(
-        start_date=str(df.index.min().date()),
+        start_date=start_date,
         end_date=end_date,
         trading_index=df.index,
         lag_trading_days=1,
     )
-    df[COLS.CASH_R] = cash_r.reindex(df.index)
+    df[COLS.CASH_R] = cash_r
 
     # 3) VIX close
-    vix_close, vix_source = load_vix_close_series(
-            start_date=str(df.index.min().date()),
+    vix_close = load_vix_close_series(
+            start_date=start_date,
             end_date=end_date)
 
     # 4) Feature/target engineering (does not drop rows)
@@ -69,7 +66,8 @@ def build_experiment_df(
     df[COLS.VIX_CLOSE] = vix_close.reindex(df.index)
 
     # 5) Data diagnostics
-    data_diag_core =  build_core_data_diagnostics(df=df,
+    data_diag_core =  build_core_data_diagnostics(
+        df=df,
         core_cols=COLS.EXPERIMENT_CORE_COLS,
         head_warmup=22,
         tail_cooldown=max(0, horizon - 1)
@@ -80,7 +78,6 @@ def build_experiment_df(
         "start_date": start_date,
         "end_date": end_date,
         "cash_source": cash_source,
-        "vix_source": vix_source,
         "data_diag_core": data_diag_core
     }
     return df, meta
@@ -93,7 +90,6 @@ def fit_forecasts(
     horizon: int,
     active_ret_col: str,
     garch_dist: str,
-    gjr_pneg_mode: str,
     holdout_start_date: str | None = None,
     xgb_params_overrides: dict[str, object] | None = None,
 ) -> dict[str, pd.Series]:
@@ -146,7 +142,6 @@ def fit_forecasts(
             early_stopping_rounds=50,
             name_prefix="xgb_harvix_wf",
             apply_lognormal_mean_correction=True,
-            embargo=horizon,
             start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
             params_overrides=xgb_params_overrides,
     )
@@ -178,7 +173,6 @@ def fit_forecasts(
             cfg=cfg,
             ret_scale=100.0,
             dist=garch_dist,
-            gjr_pneg_mode=gjr_pneg_mode,
             start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
         )
     gjr_var = gjr_var.reindex(df.index)

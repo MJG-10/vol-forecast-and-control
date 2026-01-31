@@ -2,7 +2,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from vol_forecast.utils import safe_cols
+from vol_forecast.df_utils import safe_cols
 from vol_forecast.schema import COLS
 
 
@@ -80,9 +80,6 @@ def console_report(report: dict[str, object]) -> None:
 
     print_section(f"EXPERIMENT: {meta['label']}")
     _print_kv(meta, keys=["horizon", "freq", "holdout_start_date", "hac_lag_grid"])
-    
-    # print(f"horizon={meta['horizon']}  holdout_start_date={meta['holdout_start_date']}  baseline=EWMA  var_proxy=close-to-close")
-    # print(f"freq={meta['freq']}  hac_lag_grid={meta['hac_lag_grid']}")
     
     print("wf_cfg:", meta["wf_cfg"])
     print(f"baseline_col={baseline_col}")

@@ -33,7 +33,7 @@ def compute_start_pos(
     if n <= 0:
         return 0
 
-    start_pos = int(cfg.initial_train_size)
+    start_pos = cfg.initial_train_size if cfg.window_type == "expanding" else cfg.min_train_size
 
     if origin_start_date is not None:
         ts = pd.Timestamp(origin_start_date)

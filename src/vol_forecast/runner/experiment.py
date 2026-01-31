@@ -7,9 +7,8 @@ from .experiment_pipeline import (fit_forecasts,
                                   compute_eval_panels)
 from vol_forecast.strategy import run_strategy_holdout_cost_grid
 from vol_forecast.eval.data_quality import build_holdout_data_diagnostics
-from vol_forecast.runner.experiment import compute_experiment_report
 from vol_forecast.models_tuning.tuning import tune_xgb_params_pre_holdout
-from vol_forecast.data.build_experiment_df import build_experiment_df
+from vol_forecast.runner.experiment_pipeline import build_experiment_df
 
 
 def compute_experiment_report(
@@ -21,7 +20,6 @@ def compute_experiment_report(
     execution_lag_days: int = 0,
     garch_dist: str = "t",
     holdout_start_date: str = "2019-01-01",
-    gjr_pneg_mode: str = "implied",
     hac_lag_grid: list[int] | None = None,
     run_strategy: bool =  True, 
     strategy_variants: list[str] | None = None,
@@ -55,7 +53,6 @@ def compute_experiment_report(
         horizon=horizon,
         active_ret_col=COLS.RET,
         garch_dist=garch_dist,
-        gjr_pneg_mode=gjr_pneg_mode,
         holdout_start_date=holdout_start_date,
         xgb_params_overrides=xgb_params_overrides,
     )
@@ -113,8 +110,7 @@ def compute_experiment_report(
             "initial_train_size": cfg.initial_train_size,
             "rolling_window_size": cfg.rolling_window_size,
             "refit_every": cfg.refit_every,
-            "min_train_size": cfg.min_train_size,
-            "rolling_calendar_cap": cfg.rolling_calendar_cap
+            "min_train_size": cfg.min_train_size
         },
     }
 
