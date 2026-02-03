@@ -32,9 +32,9 @@ def dm_test_qlike_var_vs_baseline_holdout(
     min_n: int = 60,
 ) -> dict[str, int | float]:
     """
-    Diebold–Mariano test on QLIKE variance loss differential:
+    Diebold-Mariano test on QLIKE variance loss differential:
       d_t = loss_model - loss_baseline (mean_d < 0 => model better).
-    Uses Newey–West HAC variance of d_t with Bartlett weights.
+    Uses Newey-West HAC variance of d_t with Bartlett weights.
     """
     needed = [target_var_col, model_var_col, baseline_var_col]
     if any(c not in df_hold.columns for c in needed):
