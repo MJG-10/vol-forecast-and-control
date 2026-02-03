@@ -3,73 +3,30 @@ import numpy as np
 import math
 
 
-def compute_leverage_from_vol_forecast(
+def compute_risky_weight_from_vol_forecast(
     sigma_hat: pd.Series,
     sigma_target: float,
-    L_max: float = 1.0,
+    w_max: float = 1.0,
     eps: float = 1e-8,
 ) -> pd.Series:
+    """Converts a volatility forecast into a bounded target risky weight series."""
     sigma = sigma_hat.clip(lower=eps)
-    L = (sigma_target / sigma).clip(lower=0.0, upper=L_max)
-    L.name = "leverage"
-    return L
+    w = (sigma_target / sigma).clip(lower=0.0, upper=w_max)
+    w.name = "risky_weight"
+    return w
 
 
-def leverage_hold_k_days(L_daily: pd.Series, k: int = 20, offset: int = 0) -> pd.Series:
-    """Hold the daily target leverage constant except on every k-th day (with phase offset)."""
-    L = L_daily.copy()
-    n = len(L)
-    mask = np.zeros(n, dtype=bool)
-    mask[offset::k] = True
-    return L.where(mask).ffill()
+def _drift_weight_one_step(w: float, r_sp: float, r_cash: float, w_max: float = 1.0) -> float:
+    """Updates the risky weight after one period if no rebalance is performed."""
+    w = float(np.clip(w, 0.0, w_max))
+    a = w * (1.0 + float(r_sp))
+    b = (1.0 - w) * (1.0 + float(r_cash))
+    denom = a + b
+    if denom <= 0:
+        return w
 
-
-def leverage_tranche_k_days(L_daily: pd.Series, k: int = 20) -> pd.Series:
-    """Stagger k 'hold-k-days' schedules (offset 0..k-1) and average them to smooth turnover."""
-    Ls = [leverage_hold_k_days(L_daily, k=k, offset=off) for off in range(k)]
-    out = pd.concat(Ls, axis=1).mean(axis=1)
-    out.name = f"leverage_tranche_{k}"
-    return out
-
-
-def leverage_daily_turnover_buffer(
-    L_daily: pd.Series,
-    *,
-    buffer_pct: float = 0.05,
-) -> pd.Series:
-    """
-    Deadband rule: only update leverage when the relative change from the last
-    implemented leverage exceeds buffer_pct.
-
-    If buffer_pct=0.05, we ignore moves <= 5% and keep prior leverage.
-    """
-    if buffer_pct <= 0:
-        out = L_daily.copy()
-        out.name = "leverage_daily"
-        return out
-
-    L_star = L_daily.astype(float)
-    out = L_star.copy()
-
-    # Iterate once; O(n) and extremely cheap relative to the rest of the pipeline.
-    prev = float(out.iloc[0])
-    for i in range(1, len(out)):
-        cur = float(L_star.iloc[i])
-
-        # Relative change; handle prev==0 safely
-        if prev > 0:
-            rel = abs(cur / prev - 1.0)
-        else:
-            rel = abs(cur - prev)
-
-        if rel <= buffer_pct:
-            out.iloc[i] = prev
-        else:
-            prev = cur
-            out.iloc[i] = cur
-
-    out.name = "leverage_daily_buffer"
-    return out
+    w_next = float(a / denom)
+    return float(np.clip(w_next, 0.0, w_max))
 
 
 def simulate_vol_control_strategy(
@@ -77,52 +34,95 @@ def simulate_vol_control_strategy(
     sigma_hat: pd.Series,
     sigma_target: float,
     cash_daily_simple: pd.Series,
-    variant: str = "daily",
-    k: int = 20,
+    variant: str = "daily_reset",
     tcost_bps: float = 0.0,
     execution_lag_days: int = 0,
-) -> tuple[pd.Series, pd.Series]:
+    *,
+    w_max: float = 1.0,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
-    Returns:
-      strat_log_ret: strategy log returns
-      leverage_exec: executed leverage series
+    Volatility-targeting / risk-control backtest driven by volatility forecasts.
+
+    Builds an executed target risky weight from `sigma_hat` (capped at w_max, with w_max <= 1.0), allocates
+    the remainder to `cash_daily_simple`, and simulates strategy log returns with an
+    explicit transaction cost model.
+
+    Conventions
+    - Input risky returns are log returns; portfolio arithmetic is done in simple returns
+      (to combine risky + cash), then converted back to log returns.
+    - Risky weight is capped at `w_max` (w_max <= 1.0 enforced, no leverage).
+    - `execution_lag_days` delays the target schedule beyond upstream alignment.
+
+    Variants
+    - "daily_reset": rebalance at the start of each day to the executed target. Costs are
+      charged on drift-aware traded notional (move from drifted pre-trade weight to target).
+    - "band_no_trade": maintain a drifting risky weight and trade only when deviation from
+      target exceeds a fixed band; costs are charged only on those trades.
+
+    Transaction costs
+    - tcost_bps is applied to daily turnover abs(tgt - w_pre) as a fraction of NAV (trade_frac).
+
+    Returns
+    - (strat_log_ret, risky_weight_used, trade_frac)
     """
+    if w_max > 1.0:
+        raise ValueError("w_max must be <= 1.0 (no leverage).")
 
     df = pd.concat({"ret": log_returns, "sigma_hat": sigma_hat}, axis=1).dropna(subset=["ret", "sigma_hat"])
-    df = df.join(cash_daily_simple.rename("cash_r"), how="left")
-    df = df.dropna(subset=["cash_r"])
+    df = df.join(cash_daily_simple.rename("cash_r"), how="left").dropna(subset=["cash_r"])
 
-    L_max = 1.0
-    L_daily = compute_leverage_from_vol_forecast(df["sigma_hat"], sigma_target=sigma_target, L_max=L_max)
+    if variant not in ("daily_reset", "band_no_trade"):
+        raise ValueError("variant must be 'daily_reset' or 'band_no_trade'")
 
-    DAILY_TURNOVER_BUFFER = 0.05
+    w_target = compute_risky_weight_from_vol_forecast(df["sigma_hat"], sigma_target=sigma_target, w_max=w_max)
+    df["w_exec_target"] = w_target.shift(int(execution_lag_days))
+    df = df.dropna(subset=["w_exec_target"])
 
-    if variant == "daily":
-        L = leverage_daily_turnover_buffer(L_daily, buffer_pct=DAILY_TURNOVER_BUFFER)
-    elif variant == "tranche20":
-        L = leverage_tranche_k_days(L_daily, k=k)
-    else:
-        raise ValueError("variant must be 'daily' or 'tranche20'")
+    r_sp = np.expm1(df["ret"]).astype(float).to_numpy()
+    r_cash = df["cash_r"].astype(float).to_numpy()
+    w_exec = df["w_exec_target"].astype(float).to_numpy()
 
-    df["L"] = L
-    df["L_exec"] = df["L"].shift(int(execution_lag_days))
-    df = df.dropna(subset=["L_exec"])
+    n = len(df)
+    w_used = np.empty(n, dtype=float)
+    trade = np.zeros(n, dtype=float)
+    strat_simple = np.empty(n, dtype=float)
 
-    r_sp = np.expm1(df["ret"])
-    r_cash = df["cash_r"].to_numpy(dtype=float)
-    
-    strat_simple = df["L_exec"] * r_sp + (1.0 - df["L_exec"]) * r_cash
+    BAND_ABS = 0.02  # absolute risky-weight band for "band_no_trade"
+
+    # Convention: start at the first executable target (no initial entry cost).
+    w_act = float(np.clip(w_exec[0], 0.0, w_max))
+    w_used[0] = w_act
+    strat_simple[0] = w_act * r_sp[0] + (1.0 - w_act) * r_cash[0]
+
+    for t in range(1, n):
+        w_act = _drift_weight_one_step(w_act, r_sp[t - 1], r_cash[t - 1], w_max=w_max)
+        tgt = float(np.clip(w_exec[t], 0.0, w_max))
+
+        if variant == "daily_reset" or abs(tgt - w_act) > BAND_ABS:
+            trade[t] = abs(tgt - w_act)
+            w_act = tgt
+
+        w_used[t] = w_act
+        strat_simple[t] = w_act * r_sp[t] + (1.0 - w_act) * r_cash[t]
 
     if tcost_bps > 0:
-        cost = (tcost_bps / 10000.0) * df["L_exec"].diff().abs().fillna(0.0)
-        strat_simple = strat_simple - cost
+        strat_simple = strat_simple - (float(tcost_bps) / 10000.0) * trade
 
-    strat_simple = strat_simple.clip(lower=-0.999999)
+    strat_simple = np.clip(strat_simple, -0.999999, np.inf)
     strat_log = np.log1p(strat_simple)
-    return strat_log.rename("strat_log_ret"), df["L_exec"].rename("leverage_exec")
+
+    idx = df.index
+    return (
+        pd.Series(strat_log, index=idx, name="strat_log_ret"),
+        pd.Series(w_used, index=idx, name="risky_weight_used"),
+        pd.Series(trade, index=idx, name="trade_frac"),
+    )
+
+
 
 
 def compute_strategy_stats(log_rets: pd.Series, freq: int = 252) -> dict[str, float]:
+    """Computes annualized performance and drawdown stats from log returns."""
     log_rets = log_rets.dropna()
     n = int(len(log_rets))
     if n == 0:
@@ -165,43 +165,38 @@ def run_strategy_holdout_cost_grid(
     signal_var_cols: list[str],
     cash_col: str,
     sigma_target: float,
-    horizon: int,
     tcost_grid_bps: list[float],
     execution_lag_days: int,
     variants: list[str]|None = None,
     freq: int = 252,
 ) -> pd.DataFrame:
-
-    # require_cols(wf_hold.columns, [cash_col], context="run_strategy_holdout_cost_grid")
-
+    """Backtests vol-control variants over signals and cost levels on the holdout window."""
     if variants is None:
-        variants = ["daily", "tranche20"]
+        variants = ["daily_reset", "band_no_trade"]
 
     rows: list[dict[str, float]] = []
 
-    # buy & hold baseline for each cost (cost doesn't apply to BH here; keep one row per cost for consistent table)
+    # Keep one BH row per cost for table comparability (no cost applied).
     for cost in tcost_grid_bps:
-        # sub_bh = wf_hold[[return_col]].dropna()
         sub_bh = wf_hold[[return_col, cash_col]].dropna()
 
         bh = sub_bh[return_col]
         bh_stats = compute_strategy_stats(bh, freq=freq)
       
         bh_stats["vol_ratio"] = float(bh_stats["ann_vol"] / sigma_target) if sigma_target > 0 else float("nan")
-        bh_stats["avg_abs_dL"] = 0.0  # BH leverage is constant at 1, so no churn
-        # cash_use = wf_hold.loc[sub_bh.index, cash_col]
+        bh_stats["avg_trade"] = 0.0
+       
         rows.append({
             "tcost_bps": float(cost),
             "strategy": "buy_and_hold",
             **bh_stats,
-            "avg_leverage": 1.0,
+            "avg_risky_weight": 1.0,
         })
 
         for sig in signal_var_cols:
             if sig not in wf_hold.columns:
                 continue
 
-            # per-signal alignment (return + this signal only)
             sub = wf_hold[[return_col, sig]].dropna()
             if len(sub) < 200:
                 continue
@@ -210,12 +205,11 @@ def run_strategy_holdout_cost_grid(
             cash_sig = wf_hold.loc[sub.index, cash_col]
 
             for variant in variants:
-                strat_rets, L_exec = simulate_vol_control_strategy(
+                strat_rets, w_used, trade_frac = simulate_vol_control_strategy(
                     sub[return_col],
                     sigma_hat,
                     sigma_target=sigma_target,
                     variant=variant,
-                    k=horizon,
                     tcost_bps=float(cost),
                     cash_daily_simple=cash_sig,
                     execution_lag_days=execution_lag_days,
@@ -223,19 +217,18 @@ def run_strategy_holdout_cost_grid(
                 stats = compute_strategy_stats(strat_rets, freq=freq)
 
                 stats["vol_ratio"] = float(stats["ann_vol"] / sigma_target) if sigma_target > 0 else float("nan")
-                dL = L_exec.diff().abs().dropna()
-                stats["avg_abs_dL"] = float(dL.mean()) if len(dL) else float("nan")
+                stats["avg_trade"] = float(trade_frac.mean()) if len(trade_frac) else float("nan")
 
                 rows.append({
                     "tcost_bps": float(cost),
                     "strategy": f"{sig}__{variant}",
                     **stats,
-                    "avg_leverage": float(L_exec.mean()) if len(L_exec) else float("nan"),
+                    "avg_risky_weight": float(w_used.mean()) if len(w_used) else float("nan"),
                 })
 
     out = pd.DataFrame(rows)
     # keep only key columns
     keep = ["tcost_bps", "strategy", "n", "ann_log_ret", "ann_simple_ret", "ann_vol", "vol_ratio", "sharpe", "max_drawdown", 
-            "avg_leverage", "avg_abs_dL"]
+            "avg_risky_weight", "avg_trade"]
     out = out[keep].sort_values(["tcost_bps", "sharpe"], ascending=[True, False]).reset_index(drop=True)
     return out
