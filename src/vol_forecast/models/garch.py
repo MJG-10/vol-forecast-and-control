@@ -16,8 +16,7 @@ def _build_refit_candidate(
     p_neg: float,
     tol_ab: float,
 ) -> RefitCandidate | None:
-    """Validate a refit result and return a commit-ready candidate, else None."""
-
+    """Validates a refit result and returns a commit-ready candidate, else None."""
     omega_new = float(res.params.get("omega", np.nan))
     alpha_new = float(res.params.get("alpha[1]", np.nan))
     beta_new  = float(res.params.get("beta[1]", np.nan))
@@ -52,13 +51,19 @@ def walk_forward_garch_family_var(
     start_date: pd.Timestamp | None = None,
 ) -> pd.Series:
     """
-    Walk-forward variance forecasts using GARCH(1,1) or GJR-GARCH(1,1).
+    Walk-forward variance forecasts from GARCH(1,1) / GJR-GARCH(1,1).
 
-    - Returns a single pd.Series of annualized variance forecasts; NaN until first successful fit.
-    - Refit on a cadence; if a refit fails or yields invalid params/state, keep previous params.
-    - One-step update then horizon recursion; for multi-step GJR uses p_neg = 0.5 (symmetric dist).
-    - If recursion is invalid at a timestamp (non-finite/non-positive h or ab >= 1), write NaN and
-      do not update state.
+    Forecasts are aligned at origin t using returns observed through t-1 (scaled by ret_scale).
+    This is a returns-only model, so `horizon` affects only the forecast aggregation: we average
+    the next `horizon` steps of the variance recursion to produce an annualized horizon-mean forecast.
+
+    Refitting / robustness:
+      - Refits every cfg.refit_every origins on a rolling/expanding window.
+      - On refit failure, retains the last valid fitted state and continues.
+      - If the one-step recursion is invalid (non-finite/non-positive) or fails the persistence check
+        (ab >= 1 - tol_ab), writes NaN and does not update state for that step.
+
+    GJR multi-step recursion assumes symmetric innovations, using P(eps < 0) = 0.5 in ab.
     """
     if dist not in ("t", "normal"):
         raise ValueError(f"dist must be 'normal' or 't'.")
@@ -88,6 +93,8 @@ def walk_forward_garch_family_var(
     omega = alpha = beta = gamma = None
     h_prev = None
     eps_prev = None
+
+    # assumes symmetric innovations for GJR horizon recursion (E[I{eps<0}])
     P_NEG_IMPLIED = 0.5
 
     for pos in range(start_pos, n2):
