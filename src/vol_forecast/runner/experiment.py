@@ -21,16 +21,21 @@ def compute_experiment_report(
     garch_dist: str = "t",
     holdout_start_date: str = "2019-01-01",
     hac_lag_grid: list[int] | None = None,
-    run_strategy: bool =  True, 
+    run_strategy: bool = True, 
     strategy_variants: list[str] | None = None,
-    sigma_target: float= 0.10,
+    sigma_target: float = 0.10,
     tcost_grid_bps: list[float] | None = None,
     xgb_params_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Builds features/targets, fits walk-forward forecasts, assembles holdout panel, 
-    computes eval panels (incl. DM), and optionally runs a vol-targeting strategy. 
-    Returns a dict of artifacts + meta. Pure compute (no I/O).
+    Compute evaluation panels/tables from a canonical experiment DataFrame `df`.
+
+    `df` must already contain returns, the forward variance target, and engineered predictors
+    aligned to avoid look-ahead (e.g., predictors known by close of t-1 for a label over t..t+h-1).
+    `execution_lag_days` affects only strategy timing (not model fitting).
+    `hac_lag_grid` affects DM standard errors/inference, not the loss differential itself.
+
+    Returns a report dict with headline tables, DM panels, diagnostics, and optional strategy results.
     """
     cfg = wf_cfg
 
@@ -38,12 +43,12 @@ def compute_experiment_report(
         tcost_grid_bps = [0.0, 1.0, 2.0, 5.0, 10.0]
 
     if strategy_variants is None:
-        strategy_variants = ["daily", "tranche20"]
+        strategy_variants = ["daily_reset", "band_no_trade"]
 
     if  hac_lag_grid is None:
         hac_lag_grid = [20, 40, 60]
 
-    baseline_col = COLS.EWMA_FORECAST_VAR
+    baseline_col = COLS.RW_FORECAST_VAR
 
  
     # Walk-forward forecasts
@@ -92,7 +97,6 @@ def compute_experiment_report(
             cash_col = COLS.CASH_R,
             signal_var_cols=strategy_signal_cols,
             sigma_target=sigma_target,
-            horizon=horizon,
             tcost_grid_bps=tcost_grid_bps,
             execution_lag_days=execution_lag_days,
             variants=strategy_variants,
@@ -141,19 +145,20 @@ def run_experiment(
     freq: int,
     wf_cfg: WalkForwardConfig,
     sigma_target: float,
-    tcost_grid_bps: list[float] | None,
+    tcost_grid_bps: list[float] | None = None,
     garch_dist: str = 't',
     holdout_start_date: str,
-    gjr_pneg_mode: str = 'implied',
     tuning_blocks: list[tuple[pd.Timestamp, pd.Timestamp]] | None = None,
-    hac_lag_grid: list[int] | None,
+    hac_lag_grid: list[int] | None = None,
     run_strategy: bool,
-    strategy_variants: list[str] | None,
+    strategy_variants: list[str] | None = None,
     do_xgb_tuning: bool = False,
 ) -> dict[str, Any]:
     """
-    Atomic experiment entrypoint: builds data, optionally tunes XGB strictly pre-holdout,
-    runs compute_experiment_report, and returns a self-contained report dict.
+    End-to-end experiment entrypoint (recommended for notebooks).
+
+    Builds the canonical experiment DataFrame (returns/targets/features/baselines), optionally
+    tunes XGB parameters using pre-holdout data, then computes and returns the report dict.
     """
     # 1) Build canonical experiment dataframe
     base_df, build_meta = build_experiment_df(
@@ -191,7 +196,6 @@ def run_experiment(
         wf_cfg=wf_cfg,
         garch_dist=garch_dist,
         holdout_start_date=holdout_start_date,
-        gjr_pneg_mode=gjr_pneg_mode,
         hac_lag_grid=hac_lag_grid,
         run_strategy=run_strategy,
         strategy_variants=strategy_variants,
