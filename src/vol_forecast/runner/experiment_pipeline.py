@@ -29,11 +29,11 @@ def build_experiment_df(
     freq: int = 252
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
-    Builds the canonical experiment DataFrame indexed by trading dates.
+    Builds the canonical experiment dataframe:
+      returns + forward variance target + engineered predictors + baseline forecasts.
 
-    Returns:
-      df: includes COLS.RET, COLS.CASH_R, and engineered columns from build_core_features(...)
-      meta: provenance (labels/sources) and core data diagnostics
+    horizon/freq define the forward realized variance target; predictors are aligned
+    to t-1 (information available by close of t-1 at forecast origin t).
     """
     # 1) Returns
     label = "S&P 500 TOTAL RETURN"
@@ -130,7 +130,7 @@ def fit_forecasts(
     forecasts["xgb_har_mean"] = xgb_har_mean.reindex(df.index)
 
     # XGB (HAR+VIX)
-    # We use the same tuned parameters for both XGB variants for simplcity.
+    # We use the same tuned parameters for both XGB variants for simplicity.
     xgb_feats_harvix = list(COLS.HAR_LOG_FEATURES + COLS.VIX_FEATURES)
     xgb_harvix_med, xgb_harvix_mean = walk_forward_xgb_logtarget_var(
             df=df,
@@ -164,7 +164,7 @@ def fit_forecasts(
         )
     garch_var = garch_var.reindex(df.index)
 
-   # GJR-GARCH
+    # GJR-GARCH
     gjr_var = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
@@ -191,11 +191,13 @@ def build_wf_hold_panel(
     holdout_start_date: str,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
-    Constructs the target-available walk-forward panel, adds forecast columns,
-    selects model columns for evaluation and default signal columns for strategy,
-    then slices the holdout period starting at `holdout_start_date`.
+    Builds the walk-forward holdout panel for evaluation/strategy.
+
+    Filters to dates where the forward target is available, attaches the walk-forward forecast
+    series as columns, selects model columns used in headline evaluation and default
+    signal columns used by the strategy, then slices the holdout by forecast-origin date
+    (wf_hold.index >= holdout_start_date).
     """
-    # We restrict to timestamps where the forward target is available.
     wf_df = df.loc[df[COLS.RV20_FWD_VAR].notna()].copy()
 
     wf_df["har_daily_wf_forecast_var"] = forecasts["har_daily"].reindex(wf_df.index)
@@ -210,7 +212,6 @@ def build_wf_hold_panel(
     model_cols_headline = safe_cols(
         wf_df,
         [
-            COLS.RW_FORECAST_VAR,
             baseline_col,
             "har_daily_wf_forecast_var",
             "xgb_har_wf_mean_var",
@@ -246,8 +247,10 @@ def compute_eval_panels(
     hac_lag_grid: list[int] | None,
 ) -> dict[str, Any]:
     """
-    Computes holdout evaluation panels (availability, headline tables, calibration,
-    XGB sanity checks, and DM vs baseline). Returned as a dict for stable access.
+    Computes holdout evaluation panels (availability, headline tables, calibration, XGB sanity, DM vs baseline).
+
+    `hac_lag_grid` controls HAC variance estimation used for DM t-stats/p-values; it does not change the
+    underlying loss differential series, only the inference.
     """
     availability = availability_summary_holdout(
         wf_hold,
@@ -306,10 +309,9 @@ def compute_eval_panels(
         min_n=200,
     )
 
-    # DM policy: for each model, we compute DM vs baseline on its own available sample
-    # (intersection of target/baseline/model). The DM panel reports sample size `n` 
-    # which we expect to be consistent across models. A common-sample policy can be adopted otherwise.
-
+    # DM policy: we compute DM(model vs baseline) on the overlap of (target, baseline, model) for each model.
+    # The DM panel reports the effective sample size `n` per model; if `n` varies materially across models,
+    # a common-sample policy (intersection across all models) could be considered instead.
     wf_hold_dm_base = wf_hold.dropna(subset=[COLS.RV20_FWD_VAR, baseline_col])
 
     dm = dm_panel_qlike_vs_baseline_holdout(
