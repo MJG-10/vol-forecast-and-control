@@ -1,7 +1,6 @@
 """Runner script to load inputs, compute the experiment report and emit console output/CSVs/plots."""
 from pathlib import Path
 import pandas as pd
-from vol_forecast.models_tuning import tuning
 from vol_forecast.wf_config import WalkForwardConfig
 from vol_forecast.runner.report_io import (console_report, 
                                            save_report_csvs, plot_report)
@@ -16,13 +15,17 @@ def main_runner(
     start_date: str | None,
     end_date: str | None,
     holdout_start_date: str | None,
+    do_xgb_tuning: bool,
+    hac_lag_grid: list[int],
+    run_strategy: bool,
+    strategy_variants: list[str],
     sigma_target: float,
     tcost_grid_bps: list[float],
     tuning_blocks: list[tuple[pd.Timestamp, pd.Timestamp]],
     out_dir: Path | None,
-    do_plots: bool,
+    do_plots: bool
 ) -> None:   
-    
+    """Script wrapper around `run_experiment` that prints/saves/plots report artifacts."""
     report = run_experiment(
         start_date=start_date,
         end_date=end_date,
@@ -33,10 +36,10 @@ def main_runner(
         tuning_blocks=tuning_blocks,
         sigma_target=sigma_target,
         tcost_grid_bps=tcost_grid_bps,
-        hac_lag_grid=[20, 30, 40, 60],
-        run_strategy=True,
-        strategy_variants=["daily", "tranche20"],
-        do_xgb_tuning=True,
+        hac_lag_grid=hac_lag_grid,
+        run_strategy=run_strategy,
+        strategy_variants=strategy_variants,
+        do_xgb_tuning=do_xgb_tuning
     )
 
     console_report(report)
@@ -65,11 +68,17 @@ def main() -> None:
     data_end_date = None
     holdout_start_date = "2015-01-01"
 
-    sigma_target = 0.1
-    tcost_grid_bps = [0.0, 5.0, 10.0, 25.0]
+    run_strategy = True
+    do_xgb_tuning = True
 
     out_dir = None
     do_plots = True
+
+    sigma_target = 0.1
+    tcost_grid_bps = [0.0, 5.0, 10.0, 25.0]
+    hac_lag_grid = [20, 30, 40, 60]
+
+    strategy_variants = ["daily_reset", "band_no_trade"]
 
     # Pre-holdout tuning blocks
     xgb_tuning_block_dates = [
@@ -90,9 +99,13 @@ def main() -> None:
         holdout_start_date=holdout_start_date,
         sigma_target=sigma_target,
         tcost_grid_bps=tcost_grid_bps,
+        do_xgb_tuning=do_xgb_tuning,
         tuning_blocks=xgb_tuning_blocks,
+        hac_lag_grid=hac_lag_grid,
+        run_strategy=run_strategy,
+        strategy_variants=strategy_variants,
         out_dir=out_dir,
-        do_plots=do_plots,
+        do_plots=do_plots
     )
 
 if __name__ == "__main__":
