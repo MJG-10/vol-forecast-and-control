@@ -4,12 +4,18 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class WalkForwardConfig:
-    # Training-window policy for walk-forward refits.
-    # - "rolling": uses only the most recent `rolling_window_size` observations at each refit.
-    # - "expanding": uses all available history up to the leakage safe cutoff.
+    """
+    Walk-forward refit configuration.
+
+    window_type:
+      - "rolling": fixed-length window ending at each origin (uses rolling_window_size).
+      - "expanding": growing window from start (uses initial_train_size).
+
+    refit_every: number of rows between refits (typically trading days).
+    """
     window_type: Literal["rolling", "expanding"] = "rolling" 
-    
-    # shared: first-fit gate (there are no forecasts until first successful fit)
+   
+    # shared: refit cadence (in origin rows)
     refit_every: int = 60
 
     # expanding-only
@@ -20,6 +26,7 @@ class WalkForwardConfig:
     min_train_size: int | None = 500
 
     def __post_init__(self) -> None:
+        # Expanding mode requires initial_train_size and does not use rolling_window_size.
         wt = self.window_type
         if int(self.refit_every) <= 0:
             raise ValueError(f"refit_every must be > 0, got {self.refit_every}")

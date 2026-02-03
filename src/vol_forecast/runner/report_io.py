@@ -104,7 +104,7 @@ def console_report(report: dict[str, object]) -> None:
     print_section("HOLDOUT AVAILABILITY SUMMARY (COMPACT)")
     print_df(report["availability"])
 
-    print_section("HOLDOUT HEADLINE TABLE (PAIRWISE VS EWMA BASELINE)")
+    print_section("HOLDOUT HEADLINE TABLE (PAIRWISE VS BASELINE)")
     print_df(report["headline_full"])
 
     mid = report["split_mid"]
@@ -119,7 +119,7 @@ def console_report(report: dict[str, object]) -> None:
     print_section("CALIBRATION MONOTONICITY (HOLDOUT): SPEARMAN corr(forecast vol, realized vol)")
     print_df(report["calibration"])
 
-    print_section(f"DM VS baseline='{baseline_col}' ON HOLDOUT (overlap daily) | HAC grid={meta["hac_lag_grid"]}")
+    print_section(f"DM VS baseline='{baseline_col}' ON HOLDOUT (overlap daily) | HAC grid={meta['hac_lag_grid']}")
     print("Note: DM is for context. Focus is on sign/magnitude stability across HAC lags (not on any single p-value).")
     print_df(report["dm"])
 
@@ -138,7 +138,7 @@ def plot_report(report: dict[str, object], *, n: int = 500) -> None:
     if len(wf_hold) == 0:
         return
 
-    title = f"{meta["label"]}: HOLDOUT tail (VOL space)".strip(": ")
+    title = f"{meta['label']}: HOLDOUT tail (VOL space)".strip(": ")
 
     plot_tail_vol(
         wf_hold,

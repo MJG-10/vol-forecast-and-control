@@ -1,16 +1,12 @@
+"""Default tuning policy"""
 from typing import Any
 
-# -----------------------------
-# Default tuning policy
-# -----------------------------
 
-DEFAULT_XGB_TUNE_VAL_DAYS: int = 252
+DEFAULT_XGB_TUNE_VAL_DAYS: int = 252  # trading days
 
-
-# Candidate override grid for lightweight xgb tuning.
-# Probes a few high leverage axes: depth (capacity), min_child_weight (smoothing),
-# subsample/colsample (bagging), reg_lambda (L2). Each dict overrides some of the base params.
-DEFAULT_XGB_CANDIDATE_OVERRIDES = [
+# Candidate override grid for lightweight XGB tuning: each dict overrides a subset of base params.
+# Probes depth/capacity, min_child_weight (smoothing), subsample/colsample (bagging), reg_lambda (L2).
+DEFAULT_XGB_CANDIDATE_OVERRIDES: list[dict[str, Any]] = [
     {},
 
     {"max_depth": 2},

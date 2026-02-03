@@ -7,7 +7,7 @@ def qlike_series_var(v_true, v_pred, eps: float = 1e-12) -> np.ndarray:
 
     Inputs are variances. Returns an array aligned with inputs.
 
-    Definition (normalized form):
+    Definition:
         x = v_true / v_pred
         qlike = x - log(x) - 1
     This is >= 0 with minimum 0 at perfect forecasts (v_pred == v_true).

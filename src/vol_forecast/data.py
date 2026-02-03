@@ -102,9 +102,10 @@ def load_sp500_total_return_close(start_date: str = "1990-01-01", end_date: str 
 
 def compute_log_returns_from_series(price: pd.Series, out_name: str = "log_ret", drop_nan: bool = True) -> pd.Series:
     """Computes 1-period log returns log(P_t/P_{t-1}). 
-    Invalid prices (<= 0 or non-numeric) and non-finite returns are treated as missing and dropped.
+    Invalid prices (<= 0 or non-numeric) and non-finite returns are treated as missing; dropped if `drop_nan=True`.
     """
-    p = price.where(price > 0)
+    p = pd.to_numeric(price, errors="coerce").astype(float)
+    p = p.where(p > 0)
     r = np.log(p / p.shift(1))
     r = r.replace([np.inf, -np.inf], np.nan)
     r.name = out_name
@@ -128,7 +129,7 @@ def load_fred_series(series_id: str, start_date: str, end_date: str|None = None)
 
 
 def load_cash_rate_percent_fred(*, start_date: str, end_date: str | None) -> tuple[pd.Series, str]:
-    """Loads cash-rate level (%) from FRED: DFF backbone, overwrites with EFFR where available; returns (series, source_label)."""
+    """Loads cash-rate level (%) from FRED: DFF backbone, overwritten with EFFR where available; returns (series, source_label)."""
     dff = load_fred_series("DFF", start_date=start_date, end_date=end_date)
     out = dff.copy()
     label = "FRED:DFF"
@@ -154,7 +155,7 @@ def cash_rate_percent_to_period_return_act360(
     """
     Converts an annualized rate level (%) to per-period simple returns on `index` using ACT/360.
 
-    Return at date t corresponds to the holding period (t-1 -> t) using calendar-day gaps.
+    Return at t applies to the period from the previous index timestamp to t (calendar-day gap).
     """
     rp = rate_percent.reindex(index).ffill()
 

@@ -3,6 +3,7 @@ import pandas as pd
 
 
 def _index_stats(df: pd.DataFrame) -> dict[str, object]:
+    """Basic index diagnostics: sample size, start/end, duplicates, and (DatetimeIndex) gap stats."""
     n = int(len(df))
     out: dict[str, object] = {"n": n}
     if n == 0:
@@ -87,7 +88,7 @@ def build_core_data_diagnostics(
     head_warmup: int = 22,
     tail_cooldown: int = 0,
 ) -> dict[str, object]:
-
+    """Index + NaN coverage diagnostics for the canonical core dataframe."""
     return {
         "core_index": _index_stats(df),
         "core_coverage": _coverage_table(
@@ -108,6 +109,7 @@ def build_holdout_data_diagnostics(
     model_var_cols: list[str],
     cash_col: str | None = None,
 ) -> dict[str, object]:
+    """Index + NaN coverage diagnostics for the holdout walk-forward output table."""
     hold_cols = [ret_col, target_var_col, baseline_var_col] + model_var_cols
 
     out: dict[str, object] = {

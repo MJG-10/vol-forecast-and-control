@@ -9,6 +9,7 @@ import statsmodels.api as sm
 
 
 def fit_log_har_var_generic(train_df: pd.DataFrame, feature_cols: list[str], y_col: str):
+    """Fits OLS on y_col ~ const + feature_cols; returns (model, residual variance sigma2)."""
     X = sm.add_constant(train_df[feature_cols], has_constant="add")
     y = train_df[y_col]
     model = sm.OLS(y, X).fit()
@@ -17,6 +18,7 @@ def fit_log_har_var_generic(train_df: pd.DataFrame, feature_cols: list[str], y_c
 
 
 def predict_log_har_var_generic(df: pd.DataFrame, model, sigma2: float, feature_cols: list[str]) -> pd.Series:
+    """Produces variance-scale forecasts using the lognormal-mean mapping from the fitted log model."""
     X = sm.add_constant(df[feature_cols], has_constant="add")
     X = X[model.model.exog_names]
     mu = model.predict(X)
@@ -34,7 +36,18 @@ def walk_forward_log_har_var_generic(
     cfg: WalkForwardConfig|None = None,
     start_date: pd.Timestamp | None = None,
 ) -> pd.Series:
+    """
+    Walk-forward HAR regression on a log-variance target.
 
+    Forecasts are aligned at origin t (variance scale). Predictors are assumed t-1 aligned (known by close of t-1),
+    while the label is the forward variance over t..t+h-1.
+
+    Refits every cfg.refit_every origins using a leakage-safe training cutoff (compute_train_end_excl).
+    If a refit fails, the last valid fit is retained and forecasting continues.
+
+    Maps log forecasts to variance via the lognormal mean: exp(mu + 0.5 * sigma2), where sigma2 is the
+    OLS residual variance (mse_resid) on the log-target scale for the current training window.
+    """
     cfg = cfg or WalkForwardConfig()
     out = pd.Series(index=df.index, dtype=float, name=out_name)
     require_cols(df.columns, list(feature_cols) + [target_log_col, target_var_col], context="walk_forward_log_har_var_generic")
