@@ -3,19 +3,9 @@ import numpy as np
 from vol_forecast.schema import COLS, require_cols
 
 
-# def forward_mean(series: pd.Series, horizon: int) -> pd.Series:
-#     """
-#     Forward looking rolling mean aligned at time t.
-
-#     Computes: out[t] = mean(series[t], ..., series[t+horizon-1]).
-#     """
-#     # rolling() is backward-looking by default; shift aligns the mean to start at t.
-#     return series.rolling(window=horizon).mean().shift(-(horizon - 1))
-
-
 def compute_daily_var_close(df: pd.DataFrame, ret_col: str) -> pd.Series:
     """Daily variance proxy from close-to-close returns: r_t^2."""
-    return (df[ret_col].astype(float) ** 2).rename("daily_var")
+    return (df[ret_col].astype(float) ** 2).rename(COLS.DAILY_VAR)
 
 
 def compute_trailing_annualized_var(daily_var: pd.Series, window: int = 20, freq: int = 252) -> pd.Series:
@@ -23,32 +13,25 @@ def compute_trailing_annualized_var(daily_var: pd.Series, window: int = 20, freq
     return float(freq) * daily_var.rolling(window=window).mean()
 
 
-# def compute_forward_annualized_var(daily_var: pd.Series, horizon: int = 20, freq: int = 252) -> pd.Series:
-#     """Forward annualized variance target: freq * mean(daily_var over next `horizon` observations)."""
-#     return float(freq) * forward_mean(daily_var, horizon=horizon)
-
 def compute_forward_annualized_var(daily_var: pd.Series, horizon: int = 20, freq: int = 252) -> pd.Series:
-    """Forward annualized variance target aligned at t: freq * mean(daily_var[t..t+h-1])."""
+    """Forward annualized variance target aligned at origin t: freq * mean(daily_var[t..t+h-1]) (implemented via shift)."""
     h = int(horizon)
     return float(freq) * daily_var.rolling(window=h).mean().shift(-(h - 1))
 
 
 def add_vix_features_tminus1(df: pd.DataFrame, vix_close: pd.Series) -> pd.DataFrame:
     """
-    Add minimal VIX features aligned to t-1 (no look-ahead).
+    Adds VIX features (t-1 aligned).
 
-    Adds:
-      - log_{prefix}_lag1: log(VIX_{t-1})
-      - dlog_{prefix}_5:   log(VIX_{t-1}) - log(VIX_{t-6})  (5 business-day log change)
+    Expects a VIX close series; values are reindexed to df.index and ffilled,
+    then shifted so predictors at origin t only use info available by close of t-1.
     """
     df = df.copy()
     eps = 1e-12
 
-    # Align VIX to the main index and forward-fill to handle VIX holidays / missing dates.
     v = vix_close.reindex(df.index).ffill()
     lv = np.log(v.astype(float).clip(lower=eps))
 
-    # t-1 alignment ensures features are known at decision time t.
     df[COLS.LOG_VIX_LAG1] = lv.shift(1)
     df[COLS.DLOG_VIX_5] = lv.shift(1) - lv.shift(6)
     return df
@@ -56,22 +39,16 @@ def add_vix_features_tminus1(df: pd.DataFrame, vix_close: pd.Series) -> pd.DataF
 
 def add_baseline_forecasts_var_tminus1(
     df: pd.DataFrame,
-    trailing_var_col: str,
-    ewma_alpha: float = 0.06,
+    trailing_var_col: str
 ) -> pd.DataFrame:
     """
-    Add simple variance-forecast baselines (t-1 aligned): random-walk and EWMA.
+    Adds t-1 aligned baseline variance forecasts.
 
-    Uses trailing variance shifted by 1 to avoid using information from day t when forecasting at t.
+    - RW baseline: trailing realized variance over the horizon, shifted by 1 day.
     """
     df = df.copy()
     v_lag = df[trailing_var_col].shift(1)
-
-    # Random-walk baseline: forecast equals last available trailing estimate.
     df[COLS.RW_FORECAST_VAR] = v_lag
-
-    # EWMA baseline on the lagged trailing variance series (common, stable benchmark).
-    df[COLS.EWMA_FORECAST_VAR] = v_lag.ewm(alpha=ewma_alpha, adjust=False).mean()
     return df
 
 
@@ -79,11 +56,10 @@ def add_har_features_from_daily_var_tminus1(
     df: pd.DataFrame,
     daily_var_col: str,
     *,
-    freq: int = 252,
-    prefix: str = "dvhar",
+    freq: int = 252
 ) -> pd.DataFrame:
     """
-    Add HAR-style predictors from a daily variance proxy, aligned to t-1 and annualized.
+    Adds HAR-style predictors from a daily variance proxy, aligned to t-1 and annualized.
 
     Features:
       COLS.DVHAR_1D  = freq * daily_var[t-1]
@@ -91,8 +67,6 @@ def add_har_features_from_daily_var_tminus1(
       COLS.DVHAR_22D = freq * mean(daily_var[t-1..t-22])
     """
     df = df.copy()
-
-    # Shift to t-1 to prevent look-ahead when predicting a target defined over t..t+h-1.
     v = df[daily_var_col].shift(1)
 
     df[COLS.DVHAR_1D] = float(freq) * v
@@ -106,10 +80,9 @@ def add_log_features_for_daily_har(
     *,
     eps: float = 1e-18,
 ) -> pd.DataFrame:
-    """Add log-transformed HAR features (with clipping) to stabilize scale and reduce skew."""
+    """Adds log-transformed HAR features (with clipping) to stabilize scale and reduce skew."""
     df = df.copy()
 
-    # Clip to avoid log(0) in calm regimes (variance proxy can be extremely small).
     df[COLS.LOG_DVHAR_1D] = np.log(df[COLS.DVHAR_1D].clip(lower=eps))
     df[COLS.LOG_DVHAR_5D] = np.log(df[COLS.DVHAR_5D].clip(lower=eps))
     df[COLS.LOG_DVHAR_22D] = np.log(df[COLS.DVHAR_22D].clip(lower=eps))
@@ -117,7 +90,7 @@ def add_log_features_for_daily_har(
 
 
 def add_log_target_var(df: pd.DataFrame, target_var_col: str, eps: float = 1e-18) -> pd.DataFrame:
-    """Add `log_target_var` = log(target_var_col) with clipping to avoid log(0)."""
+    """Add `COLS.LOG_TARGET_VAR` = log(target_var_col) after clipping at `eps` for numerical stability."""
     df = df.copy()
     df[COLS.LOG_TARGET_VAR] = np.log(df[target_var_col].clip(lower=eps))
     return df
@@ -128,17 +101,16 @@ def build_core_features(
     *,
     ret_col: str,
     horizon: int,
+    vix_close: pd.Series,
     freq: int = 252,
     trailing_window: int = 20,
-    ewma_alpha: float = 0.06,
-    vix_close: pd.Series = None,
-    eps_log: float = 1e-18,
+    eps_log: float = 1e-18
 ) -> pd.DataFrame:
     """
-    Build the canonical feature/target table used by the forecasting pipeline.
+    Builds the canonical feature/target table used by the forecasting pipeline.
 
-    This wrapper composes the primitive feature functions and pins down the
-    project-wide column names via `COLS`. It does not drop rows.
+    Calls the lower-level feature builders and standardizes column names via `COLS`.
+    Does not drop rows.
     """
     out = df.copy()
     # strict boundary check
@@ -157,7 +129,7 @@ def build_core_features(
 
     # 3) Baselines (t-1 aligned)
     out = add_baseline_forecasts_var_tminus1(
-        out, trailing_var_col=COLS.RV20_VAR, ewma_alpha=float(ewma_alpha)
+        out, trailing_var_col=COLS.RV20_VAR
     )
 
     # 4) HAR features (t-1 aligned) + log transforms
