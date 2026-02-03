@@ -4,20 +4,23 @@ Time index and alignment convention (canonical)
 Let t denote the DatetimeIndex label of a row.
 
 1) Equity return:
-   RET[t] = log(P_t / P_{t-1}), i.e. the close-to-close log return over (t-1 -> t).
+   RET[t] = log(P_t / P_{t-1}), i.e. close-to-close log return over (t-1 -> t).
 
 2) Cash return:
-   CASH_R[t] is the simple cash return accrued over the same holding interval (t-1 -> t),
-   computed from an annualized rate series using ACT/360 on the calendar-day gap.
-   The rate *level* is lagged by 1 trading day so that the fixing used for (t-1 -> t)
-   is available at/ before t-1 (conservative).
+   CASH_R[t] is the simple cash return accrued over (t-1 -> t). It is computed from an
+   annualized overnight rate series using ACT/360 on the calendar-day gap. The accrual
+   for (t-1 -> t) uses the rate level available by t-1 (i.e., the rate series is lagged
+   by 1 trading day before conversion to returns).
 
-3) Features used for forecasting at row t must be known without using information from day t.
-   Therefore, predictors derived from market closes (e.g. VIX) are aligned to t-1.
+3) Forecasting features:
+   Features used at origin t must be known without using information from day t.
+   Therefore, predictors derived from market closes (e.g., VIX, daily variance)
+   are aligned to t-1.
 
 4) Strategy execution timing:
-   The leverage applied to RET[t] must be computed from information available by t-1 close.
-   If inputs are already t-1 aligned, then no additional execution lag is required.
+   The leverage applied to RET[t] must be computable from information available
+   by t-1 close. execution_lag_days is an extra conservative delay beyond t-1
+   alignment; set to 0 if t-1 alignment is treated as sufficient.
 """
 
 from dataclasses import dataclass
@@ -41,9 +44,8 @@ class Cols:
     # Cash return
     CASH_R: str = "cash_r_act360"
 
-    # Baselines
+    # Baseline
     RW_FORECAST_VAR: str = "rw_forecast_var"
-    EWMA_FORECAST_VAR: str = "ewma_forecast_var"
 
     # HAR
     DVHAR_1D: str = "dvhar_1d"
@@ -61,7 +63,6 @@ class Cols:
     # VIX features
     LOG_VIX_LAG1: str = "log_vix_lag1"
     DLOG_VIX_5: str = "dlog_vix_5"
-
 
     @property
     def HAR_FEATURES(self) -> tuple[str, ...]:
@@ -93,15 +94,14 @@ COLS = Cols()
 
 
 def missing_cols(available: Sequence[str], required: Iterable[str]) -> list[str]:
-    """Return missing column names (preserving order)."""
+    """Returns missing column names (preserving order)."""
     avail = set(available)
     return [c for c in required if c not in avail]
 
 
 def require_cols(available: Sequence[str], required: Iterable[str], *, context: str = "") -> None:
     """
-    Strict-mode validator: raise if any required column is missing.
-    Use this in runner/model code when you prefer hard failures over silent skipping.
+    Strict-mode validator: raises error if any required column is missing.
     """
     miss = missing_cols(available, required)
     if miss:
