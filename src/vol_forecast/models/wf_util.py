@@ -3,6 +3,7 @@ from vol_forecast.wf_config import WalkForwardConfig
 
 
 def get_train_slice(i: int, window_type: str, rolling_window_size: int | None) -> slice:
+    """Returns the training slice ending at i (exclusive) for expanding or rolling windows."""
     if window_type == "expanding":
         return slice(0, i)
     if window_type == "rolling":
@@ -21,13 +22,10 @@ def compute_start_pos(
     origin_start_date: pd.Timestamp | None = None,
 ) -> int:
     """
-    First origin position to forecast.
+    First feasible forecast-origin position (row index).
 
-    Combines:
-      (1) feasibility: at least cfg.initial_train_size usable rows (after dropna),
-      (2) optional boundary: do not forecast before origin_start_date.
-
-    If origin_start_date is not an exact index member, uses searchsorted (next available date).
+    Enforces minimum training history (cfg.initial_train_size or cfg.min_train_size),
+    and optionally moves the start forward to origin_start_date (via searchsorted).
     """
     n = int(n_rows)
     if n <= 0:
@@ -41,12 +39,13 @@ def compute_start_pos(
 
     return start_pos
 
-
 def compute_train_end_excl(pos: int, *, horizon: int) -> int:
     """
-    Exclusive training end index for forecast at position `pos`, enforcing overlap safety:
-    train indices i must satisfy i + horizon - 1 < pos  =>  i <= pos - horizon
-    so train_end_excl = pos - horizon + 1 (exclusive).
+    Exclusive end index for training origins when the label uses a forward window.
+
+    For a horizon h label at origin i that depends on rows [i .. i+h-1], requiring
+    i+h-1 < pos implies i <= pos-h. Therefore the training slice should end at
+    pos-h+1 (exclusive).
     """
     return max(0, pos - horizon + 1)
 
@@ -59,21 +58,15 @@ def compute_purged_val_split(
     embargo: int,
     min_train_size: int = 100,
     min_val_points: int = 50,
-) -> tuple[int, int]|None:
+) -> tuple[int, int] | None:
     """
-    Given a contiguous in-sample block of length n_all, compute a purged train/val split:
+    Purged train/val split with an embargo gap to prevent overlap of forward-window labels.
 
-      [0 .. split_end) = train for fitting
-      [split_end .. split_end+embargo) = embargo gap
-      [split_end+embargo .. split_end+embargo+val_size) = validation
+      train:   [0 .. split_end)
+      embargo: [split_end .. split_end+embargo)
+      val:     [split_end+embargo .. split_end+embargo+val_size)
 
-    Returns (split_end, val_size), or None if a feasible split cannot be formed.
-    This matches your current intent: keep validation near the end, and enforce a gap
-    to reduce leakage/overlap issues.
-
-    Notes:
-    - min_train_size applies to the fitting block length (split_end >= min_train_size).
-    - min_val_points is the minimum size of validation to be meaningful.
+    Returns (split_end, val_size), or None if infeasible.
     """
     if n_all < (min_train_size + embargo + min_val_points):
         return None
