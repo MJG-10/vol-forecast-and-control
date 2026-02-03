@@ -6,15 +6,13 @@ The objective is to compare the volatility forecasts of econometric and machine 
 
 ## What we test specifically 
 
-- **Target**: forward realized variance over horizon *h* (annualized; *h* = 20 trading days here).
+- **Target**: forward realized variance over horizon $h$ (annualized; $h = 20$ trading days here).
 
-  $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h)=\frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^{2}$$
+$$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$$
 
-  where $r_t = \log(P_t / P_{t-1})$ is the daily log return and $f$ is the annualization factor (usually 252).
+where $r_t = \log(P_t / P_{t-1})$ is the daily log return and $f$ is the annualization factor (usually 252).
 
-- **Timing convention**: at forecast origin **t**, predictors use information available by the close of **t-1** (no look-ahead).
-  The target $\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h)$ aggregates realized returns $(r_t, \ldots, r_{t+h-1})$ and is aligned back onto date **t**.
-  Strategy execution can optionally apply an additional delay via `execution_lag_days`.
+- **Timing convention**: at forecast origin $t$, predictors use information available by the close of $t-1$ (no look-ahead). The target $\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h)$ aggregates realized returns $(r_t, \ldots, r_{t+h-1})$ and is aligned back onto date $t$. Strategy execution can optionally apply an additional delay via `execution_lag_days`.
 - **Experiment design**: walk-forward training with a fixed holdout segment for headline comparisons.
 - **Models**: HAR-type models, GARCH variants (including GJR-GARCH) and XGBoost-based forecasters (HAR-only and HAR+VIX variants).
 - **Baseline**: Random-walk baseline on variance.
