@@ -3,8 +3,9 @@ Pre-holdout tuning utilities.
 
 We choose among a small, fixed set of candidate XGB parameter overrides using only
 data strictly before the holdout start (with an embargo to avoid label overlap).
-Candidates are scored by mean QLIKE on a pre holdout validation block. The tuner returns 
-the selected override dict and window metadata, and a compact score table for audit.
+Candidates are scored by QLIKE on one or more pre-holdout validation blocks (default: one window, ending at the embargo boundary).
+Selection is by (median block QLIKE, worst-block QLIKE). The tuner returns the selected override dict,
+window metadata, and a compact score table for audit.
 """
 from dataclasses import dataclass
 from typing import Any
@@ -25,10 +26,10 @@ class TuneWindow:
 
     def compute_dates(self, idx: pd.DatetimeIndex) -> tuple[pd.Timestamp, pd.Timestamp]:
         """
-        Define a tuning validation window that is strictly pre-holdout with an embargo
+        Defines a tuning validation window that is strictly pre-holdout with an embargo
         that prevents label overlap with holdout.
 
-        We assume holdout is defined on *forecast origin dates* t >= holdout_start.
+        We assume holdout is defined on forecast origin dates t >= holdout_start.
         Because target is forward-looking over horizon, we embargo the boundary using horizon 
         so that any tuning origin's target window ends before holdout_start.
         """
@@ -45,8 +46,7 @@ class TuneWindow:
                 f"holdout_start={pd.Timestamp(self.holdout_start).date()} is after the last index date."
             )
 
-        # Last tuning origin date: strictly before holdout, and with forward window ending before holdout.
-        # target window length is horizon trading days, spanning [t, t+h-1].
+        # Tuning cutoff with horizon embargo: we choose last tuning origin so its forward target window ends before holdout_start.
         pos_tune_end = pos_H - (self.horizon - 1) - 1
         if pos_tune_end <= 0:
             holdout_eff = idx[pos_H]
@@ -73,7 +73,7 @@ def forecast_xgb_mean_var(
     apply_lognormal_mean_correction: bool = True,
 ) -> pd.Series:
     """
-    Adapter: produce an XGB mean variance forecast series aligned to df.index for a given overrides dict.
+    Adapter: produces an XGB mean variance forecast series aligned to df.index for a given overrides dict.
     """
     _med, mean = walk_forward_xgb_logtarget_var(
         df=df,
@@ -102,11 +102,13 @@ def tune_xgb_params_pre_holdout(
     min_block_n: int = 200,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
     """
-    Choose among DEFAULT_XGB candidates using only pre-holdout data (with embargo).
+    Selects among a fixed set of XGB parameter candidates using pre-holdout data only.
+    Applies an embargo around holdout_start to avoid forward-window overlap.
 
-    If `blocks` is provided, each candidate is scored on each block (mean QLIKE per block),
-    and selection minimizes the median block score (tie-broken by worst-block score).
-    Otherwise, fall back to the contiguous TuneWindow scoring.
+    Scoring:
+      - Default: mean daily QLIKE over the tuning validation window [tune_val_start, tune_val_end].
+      - If blocks are provided: median block QLIKE (tie-breaker: worst-block QLIKE).
+      - Blocks with n < min_block_n are assigned inf.
     """
 
     tw = TuneWindow(
@@ -119,9 +121,11 @@ def tune_xgb_params_pre_holdout(
     if blocks is not None:
         idx = df.index
         for s, e in blocks:
+            s_ts = pd.Timestamp(s)
             e_ts = pd.Timestamp(e)
+            if s_ts > e_ts:
+                raise ValueError(f"Invalid block: start {s_ts.date()} > end {e_ts.date()}.")
 
-            # Effective block end on the trading calendar: last index date <= requested e
             pos_e = int(idx.searchsorted(e_ts, side="right")) - 1
             if pos_e < 0:
                 raise ValueError(
@@ -144,7 +148,6 @@ def tune_xgb_params_pre_holdout(
     best_key = (float("inf"), float("inf"))  # (median, worst)
     best_overrides: dict[str, Any] | None = None
 
-    # Default to a single contiguous validation window if no blocks are provided.
     if blocks is None:
         blocks = [(tune_val_start, tune_val_end)]
         block_names = ["tune_window"]
@@ -194,7 +197,6 @@ def tune_xgb_params_pre_holdout(
             "overrides": overrides,
         }
 
-        # Optional: include per-block columns for inspection
         for bname, sc, nn in zip(block_names, block_scores, block_ns):
             row[f"{bname}_qlike"] = float(sc)
             row[f"{bname}_n"] = int(nn)
@@ -217,7 +219,6 @@ def tune_xgb_params_pre_holdout(
         "horizon": int(horizon),
         "used_blocks": [(pd.Timestamp(s), pd.Timestamp(e)) for s, e in blocks],
         "min_block_n": int(min_block_n),
-        # still record TuneWindow for transparency even if blocks override it
         "tune_val_start": tune_val_start,
         "tune_val_end": tune_val_end,
         "tune_val_days": int(tune_val_days),
