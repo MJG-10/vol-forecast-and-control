@@ -84,7 +84,6 @@ class Cols:
             self.RV20_VAR,
             self.RV20_FWD_VAR,
             self.RW_FORECAST_VAR,
-            self.EWMA_FORECAST_VAR,
             self.LOG_TARGET_VAR,
             *self.HAR_LOG_FEATURES,
             *self.VIX_FEATURES
