@@ -2,15 +2,11 @@ import math
 import numpy as np
 import pandas as pd
 from vol_forecast.metrics import qlike_series_var
-
-
-def _normal_cdf(x: float) -> float:
-    """Standard normal CDF using erf."""
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+from scipy.stats import norm
 
 
 def newey_west_long_run_var(x: np.ndarray, lag: int) -> float:
-    """Newey-West long-run variance (Bartlett weights) for a 1D series."""
+    """Newey-West long-run variance with Bartlett weights for a mean-zeroed 1D series."""
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
     n = len(x)
@@ -34,20 +30,20 @@ def dm_test_qlike_var_vs_baseline_holdout(
     baseline_var_col: str,
     hac_lag: int,
     min_n: int = 60,
-) -> dict[str, float]:
+) -> dict[str, int | float]:
     """
-    DM test on HOLDOUT using QLIKE variance loss differential:
-      d_t = loss_model - loss_baseline (mean_d < 0 -> model better).
-    Uses Newey-West HAC variance of d_t.
+    Diebold–Mariano test on QLIKE variance loss differential:
+      d_t = loss_model - loss_baseline (mean_d < 0 => model better).
+    Uses Newey–West HAC variance of d_t with Bartlett weights.
     """
     needed = [target_var_col, model_var_col, baseline_var_col]
     if any(c not in df_hold.columns for c in needed):
-        return {"n": 0.0, "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float("nan")}
+        return {"n": 0, "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float("nan")}
 
     sub = df_hold[needed].dropna()
     n = int(len(sub))
     if n < int(min_n):
-        return {"n": float(n), "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float("nan")}
+        return {"n": n, "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float("nan")}
 
     v = sub[target_var_col].values.astype(float)
     m = sub[model_var_col].values.astype(float)
@@ -60,21 +56,19 @@ def dm_test_qlike_var_vs_baseline_holdout(
     d = d[np.isfinite(d)]
     n2 = int(len(d))
     if n2 < int(min_n):
-        return {"n": float(n2), "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float(np.mean(d))}
+        mean_d = float(np.mean(d)) if n2 > 0 else float("nan")
+        return {"n": n2, "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": mean_d}
 
     d_mean = float(np.mean(d))
     lr_var = newey_west_long_run_var(d, lag=int(hac_lag))
     if (not np.isfinite(lr_var)) or (lr_var <= 0.0):
-        return {"n": float(n2), "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float(d_mean)}
+        return {"n": n2, "dm_stat": float("nan"), "p_value": float("nan"), "mean_d": float(d_mean)}
 
     dm_stat = d_mean / math.sqrt(lr_var / float(n2))
-    p = 2.0 * (1.0 - _normal_cdf(abs(dm_stat)))
-    # p = math.erfc(abs(dm_stat) / math.sqrt(2.0))
-#     from statistics import NormalDist
+    p = 2.0 * norm.sf(abs(dm_stat))
 
-# p = 2.0 * NormalDist().cdf(-abs(dm_stat))
 
-    return {"n": float(n2), "dm_stat": float(dm_stat), "p_value": float(p), "mean_d": float(d_mean)}
+    return {"n": n2, "dm_stat": float(dm_stat), "p_value": float(p), "mean_d": float(d_mean)}
 
 
 def dm_panel_qlike_vs_baseline_holdout(
@@ -96,7 +90,8 @@ def dm_panel_qlike_vs_baseline_holdout(
     if baseline_var_col not in df_hold.columns or target_var_col not in df_hold.columns or len(cols) == 0:
         return pd.DataFrame()
 
-    rows: list[dict[str, float]] = []
+    rows: list[dict[str, object]] = []
+
     for lag in hac_lag_grid:
         for col in cols:
             res = dm_test_qlike_var_vs_baseline_holdout(
@@ -107,10 +102,11 @@ def dm_panel_qlike_vs_baseline_holdout(
                 hac_lag=int(lag),
                 min_n=min_n,
             )
+            n_val = res.get("n", np.nan)
             rows.append({
                 "model": col,
-                "hac_lag": float(lag),
-                "n": float(res.get("n", np.nan)),
+                "hac_lag": int(lag),
+                "n": int(n_val) if isinstance(n_val, (int, np.integer)) else np.nan,
                 "mean_d": float(res.get("mean_d", np.nan)),
                 "dm_stat": float(res.get("dm_stat", np.nan)),
                 "p_value": float(res.get("p_value", np.nan)),
