@@ -18,6 +18,7 @@ def make_xgb_model(
     eval_metric: str = "rmse",
     params_overrides: dict[str, Any] | None = None,
 ) -> XGBRegressor:
+    """Constructs XGBRegressor with project defaults and optional overrides."""
     params: dict[str, Any] = dict(
         objective="reg:squarederror",
         n_estimators=2000,
@@ -65,7 +66,7 @@ def select_best_iteration_by_qlike(
     grid_points: int = 25,
     min_iter: int = 10,
 ) -> int | None:
-    """Chooses iteration that minimizes QLIKE on v_true vs exp(mu_pred) over the validation slice."""
+    """Selects a tree iteration that minimizes QLIKE on variance-scale preds (exp(mu)) over validation."""
     v_true_va = np.asarray(v_true_va, dtype=float)
     if len(v_true_va) < 50:
         return None
@@ -129,17 +130,19 @@ def walk_forward_xgb_logtarget_var(
     name_prefix: str = "xgb_wf",
 ) -> tuple[pd.Series, pd.Series]:
     """
-    Walk-forward XGB on log forward-variance.
+    Walk-forward XGBoost forecasts for a log-variance target.
 
-    Refit every cfg.refit_every using data up to (pos - horizon). If a purged
-    validation split exists, fit with RMSE early stopping and optionally pick a
-    tree iteration by minimizing QLIKE on exp(mu) over the validation slice.
+    Forecasts are aligned at origin t. Predictors are assumed t-1 aligned (known by close of t-1),
+    while the label is the forward variance over t..t+h-1.
 
-    Returns:
-      - out_med: exp(mu) (median variance).
-      - out_mean: exp(mu + 0.5*var_eps_eff) if enabled and var_eps is ready; else out_med.
-    var_eps is EWMA variance of matured log residuals eps = y - mu (available after horizon),
-    optionally capped via mean_mult_cap.
+    Refits every cfg.refit_every origins using a leakage-safe training cutoff (compute_train_end_excl).
+    Within each refit, early stopping (RMSE) uses a purged train/val split with embargo=horizon.
+
+    After RMSE early stopping, the code attempts to select a tree iteration minimizing QLIKE on exp(mu)
+    over the validation slice; if unavailable, it falls back to the default model.predict behavior.
+
+    Returns (out_med, out_mean) where out_med = exp(mu) and out_mean applies an optional lognormal mean
+    correction using a lagged EWMA estimate of Var(eps) for eps = y - mu (optionally capped by mean_mult_cap).
     """
     require_cols(df.columns, list(features) + [target_var_col, target_log_col], context="walk_forward_xgb_logtarget_var")
 
@@ -161,7 +164,7 @@ def walk_forward_xgb_logtarget_var(
 
     model: XGBRegressor | None = None
 
-    # lagged, out-of-sample log-residual moments 
+    # EWMA moments of lagged log-residuals (become observable ~horizon steps later)
     mu_by_pos: dict[int, float] = {}
     eps_mean_ewma = 0.0               
     eps2_mean_ewma = 0.0               
@@ -206,6 +209,7 @@ def walk_forward_xgb_logtarget_var(
                 y_all = train[target_log_col]
                 n_all = len(train)
 
+                # Purged train/val split with horizon embargo to avoid forward-window overlap leakage
                 split = compute_purged_val_split(
                     n_all,
                     val_frac=val_frac,
