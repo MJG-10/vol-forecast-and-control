@@ -6,19 +6,18 @@ The objective is to compare the volatility forecasts of econometric and machine 
 
 ## What we test specifically 
 
-- **Target**: forward realized variance over a chosen horizon h (annualized; h = 20 trading days here).
+- **Target**: forward realized variance over horizon *h* (annualized; *h* = 20 trading days here).
 
-RV_fwd_ann(t; h) = f * (1/h) * Σ_{i=0..h-1} r_{t+i}^2
+  $$\mathrm{RV}_{\mathrm{fwd,ann}}(t;h)=\frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^{2}$$
 
-where r_t = log(P_t / P_{t-1}) is the daily log return, h is the horizon,
-and f is the annualization factor (typically 252).
+  where \(r_t = \log(P_t / P_{t-1})\) is the daily log return and \(f\) is the annualization factor (usually 252).
 
 - **Timing convention**: at forecast origin **t**, predictors use information available by the close of **t-1** (no look-ahead).
-The target RV_fwd_ann(t; h) aggregates realized returns **r_t ... r_{t+h-1}** and is aligned back onto date **t**.
-Strategy execution can optionally apply an additional delay via `execution_lag_days`.
+  The target \(\mathrm{RV}_{\mathrm{fwd,ann}}(t;h)\) aggregates realized returns \(r_t,\ldots,r_{t+h-1}\) and is aligned back onto date **t**.
+  Strategy execution can optionally apply an additional delay via `execution_lag_days`.
 - **Experiment design**: walk-forward training with a fixed holdout segment for headline comparisons.
 - **Models**: HAR-type models, GARCH variants (including GJR-GARCH) and XGBoost-based forecasters (HAR-only and HAR+VIX variants).
-- **Baseline**: Random-walk variance forecasts.
+- **Baseline**: Random-walk baseline on variance.
 - **Diagnostics**: Loss-based evaluation (RMSE on volatility, QLIKE on variance) and Diebold–Mariano (DM) tests across multiple HAC lags. Headline comparisons are based on QLIKE and RMSE, and DM tests are added for context.
 - **Backtest (optional)**: a volatility-targeting backtest driven by the forecasts and evaluated across a grid of transaction costs. This requires a cash return series and can report multiple execution variants (daily with turnover buffer or tranche-style rebalancing). Execution timing is controlled via `execution_lag_days` (an extra lag beyond the t-1 predictor alignment).
 
