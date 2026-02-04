@@ -39,7 +39,8 @@ def simulate_vol_control_strategy(
     execution_lag_days: int = 0,
     *,
     w_max: float = 1.0,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
+    tiny_eps: float = 1e-12,
+) -> tuple[pd.Series, pd.Series, pd.Series, float]:
     """
     Volatility-targeting / risk-control backtest driven by volatility forecasts.
 
@@ -63,7 +64,7 @@ def simulate_vol_control_strategy(
     - tcost_bps is applied to daily turnover abs(tgt - w_pre) as a fraction of NAV (trade_frac).
 
     Returns
-    - (strat_log_ret, risky_weight_used, trade_frac)
+    - (strat_log_ret, risky_weight_used, trade_frac, pct_capped)
     """
     if w_max > 1.0:
         raise ValueError("w_max must be <= 1.0 (no leverage).")
@@ -87,7 +88,7 @@ def simulate_vol_control_strategy(
     trade = np.zeros(n, dtype=float)
     strat_simple = np.empty(n, dtype=float)
 
-    BAND_ABS = 0.02  # absolute risky-weight band for "band_no_trade"
+    BAND_ABS = 0.05  # absolute risky-weight band for "band_no_trade"
 
     # Convention: start at the first executable target (no initial entry cost).
     w_act = float(np.clip(w_exec[0], 0.0, w_max))
@@ -112,13 +113,15 @@ def simulate_vol_control_strategy(
     strat_log = np.log1p(strat_simple)
 
     idx = df.index
+
+    cap_level = w_max - float(tiny_eps)
+    pct_capped = float(np.mean(w_used >= cap_level)) if n else float("nan")
     return (
         pd.Series(strat_log, index=idx, name="strat_log_ret"),
         pd.Series(w_used, index=idx, name="risky_weight_used"),
         pd.Series(trade, index=idx, name="trade_frac"),
+        pct_capped
     )
-
-
 
 
 def compute_strategy_stats(log_rets: pd.Series, freq: int = 252) -> dict[str, float]:
@@ -191,6 +194,7 @@ def run_strategy_holdout_cost_grid(
             "strategy": "buy_and_hold",
             **bh_stats,
             "avg_risky_weight": 1.0,
+            "pct_capped": 1.0  # fully invested every day
         })
 
         for sig in signal_var_cols:
@@ -205,7 +209,7 @@ def run_strategy_holdout_cost_grid(
             cash_sig = wf_hold.loc[sub.index, cash_col]
 
             for variant in variants:
-                strat_rets, w_used, trade_frac = simulate_vol_control_strategy(
+                strat_rets, w_used, trade_frac, pct_capped = simulate_vol_control_strategy(
                     sub[return_col],
                     sigma_hat,
                     sigma_target=sigma_target,
@@ -224,11 +228,12 @@ def run_strategy_holdout_cost_grid(
                     "strategy": f"{sig}__{variant}",
                     **stats,
                     "avg_risky_weight": float(w_used.mean()) if len(w_used) else float("nan"),
+                    "pct_capped": float(pct_capped)
                 })
 
     out = pd.DataFrame(rows)
     # keep only key columns
     keep = ["tcost_bps", "strategy", "n", "ann_log_ret", "ann_simple_ret", "ann_vol", "vol_ratio", "sharpe", "max_drawdown", 
-            "avg_risky_weight", "avg_trade"]
+            "avg_risky_weight", "avg_trade", "pct_capped"]
     out = out[keep].sort_values(["tcost_bps", "sharpe"], ascending=[True, False]).reset_index(drop=True)
     return out

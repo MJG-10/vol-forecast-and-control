@@ -10,7 +10,6 @@ from vol_forecast.runner.experiment import run_experiment
 def main_runner(
     *,
     horizon: int,
-    freq: int,
     wf_cfg: WalkForwardConfig,
     start_date: str | None,
     end_date: str | None,
@@ -30,7 +29,6 @@ def main_runner(
         start_date=start_date,
         end_date=end_date,
         horizon=horizon,
-        freq=freq,
         wf_cfg=wf_cfg,
         holdout_start_date=holdout_start_date,
         tuning_blocks=tuning_blocks,
@@ -54,8 +52,7 @@ def main_runner(
 def main() -> None:
     """Entry point for running the experiment with the default parameters."""
     
-    horizon = 20
-    freq = 252
+    horizon = 22
 
     wf_cfg = WalkForwardConfig(
         window_type="rolling",
@@ -92,7 +89,6 @@ def main() -> None:
 
     main_runner(
         horizon=horizon,
-        freq=freq,
         wf_cfg=wf_cfg,
         start_date=data_start_date,
         end_date=data_end_date,
