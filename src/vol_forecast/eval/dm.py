@@ -116,7 +116,7 @@ def dm_panel_qlike_vs_baseline_holdout(
     if out.empty:
         return out
 
-    out["better_than_baseline"] = out["mean_d"] < 0.0
-    out = out.sort_values(["hac_lag", "p_value", "mean_d"], ascending=[True, True, True]).reset_index(drop=True)
+    out["mean_better_than_baseline"] = out["mean_d"] < 0.0
+    out = out.sort_values(["model", "hac_lag"], ascending=[True, True]).reset_index(drop=True)
     return out
 
