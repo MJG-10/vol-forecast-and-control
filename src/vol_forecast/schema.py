@@ -37,15 +37,15 @@ class Cols:
     # Core return / variance / targets
     RET: str = "log_ret"
     DAILY_VAR: str = "daily_var"
-    RV20_VAR: str = "rv20_var"
-    RV20_FWD_VAR: str = "rv20_fwd_var"
-    LOG_TARGET_VAR: str = "log_target_var"
+    RVAR_TRAIL: str = "rvar_trail"  
+    RVAR_FWD: str  = "rvar_fwd"    
+    LOG_RVAR_FWD: str = "log_rvar_fwd" 
 
     # Cash return
     CASH_R: str = "cash_r_act360"
 
     # Baseline
-    RW_FORECAST_VAR: str = "rw_forecast_var"
+    RW_FORECAST_VAR: str = "rw_forecast_RV"
 
     # HAR
     DVHAR_1D: str = "dvhar_1d"
@@ -81,10 +81,10 @@ class Cols:
         return (
             self.RET,
             self.DAILY_VAR,
-            self.RV20_VAR,
-            self.RV20_FWD_VAR,
+            self.RVAR_TRAIL,
+            self.RVAR_FWD,
             self.RW_FORECAST_VAR,
-            self.LOG_TARGET_VAR,
+            self.LOG_RVAR_FWD,
             *self.HAR_LOG_FEATURES,
             *self.VIX_FEATURES
         )

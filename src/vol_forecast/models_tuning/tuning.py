@@ -78,8 +78,8 @@ def forecast_xgb_mean_var(
     _med, mean = walk_forward_xgb_logtarget_var(
         df=df,
         features=list(COLS.HAR_LOG_FEATURES),
-        target_var_col=COLS.RV20_FWD_VAR,
-        target_log_col=COLS.LOG_TARGET_VAR,
+        target_var_col=COLS.RVAR_FWD,
+        target_log_col=COLS.LOG_RVAR_FWD,
         horizon=horizon,
         cfg=cfg,
         start_date=None,
@@ -169,7 +169,7 @@ def tune_xgb_params_pre_holdout(
         for (start, end), bname in zip(blocks, block_names):
             sub = pd.concat(
                 [
-                    df.loc[(df.index >= start) & (df.index <= end), COLS.RV20_FWD_VAR].rename("y"),
+                    df.loc[(df.index >= start) & (df.index <= end), COLS.RVAR_FWD].rename("y"),
                     mean_for.loc[(mean_for.index >= start) & (mean_for.index <= end)].rename("p"),
                 ],
                 axis=1,

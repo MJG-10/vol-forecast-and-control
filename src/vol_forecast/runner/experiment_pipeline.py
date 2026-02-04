@@ -103,8 +103,8 @@ def fit_forecasts(
     har_daily = walk_forward_log_har_var_generic(
         df=df,
         feature_cols=list(COLS.HAR_LOG_FEATURES),
-        target_log_col=COLS.LOG_TARGET_VAR,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_log_col=COLS.LOG_RVAR_FWD,
+        target_var_col=COLS.RVAR_FWD,
         horizon=horizon,
         out_name="har_daily_wf_forecast_var",
         cfg=cfg,
@@ -116,8 +116,8 @@ def fit_forecasts(
     xgb_har_med, xgb_har_mean = walk_forward_xgb_logtarget_var(
         df=df,
         features=list(COLS.HAR_LOG_FEATURES),
-        target_var_col=COLS.RV20_FWD_VAR,
-        target_log_col=COLS.LOG_TARGET_VAR,
+        target_var_col=COLS.RVAR_FWD,
+        target_log_col=COLS.LOG_RVAR_FWD,
         horizon=horizon,
         cfg=cfg,
         early_stopping_rounds=50,
@@ -135,8 +135,8 @@ def fit_forecasts(
     xgb_harvix_med, xgb_harvix_mean = walk_forward_xgb_logtarget_var(
             df=df,
             features=xgb_feats_harvix,
-            target_var_col=COLS.RV20_FWD_VAR,
-            target_log_col=COLS.LOG_TARGET_VAR,
+            target_var_col=COLS.RVAR_FWD,
+            target_log_col=COLS.LOG_RVAR_FWD,
             horizon=horizon,
             cfg=cfg,
             early_stopping_rounds=50,
@@ -198,7 +198,7 @@ def build_wf_hold_panel(
     signal columns used by the strategy, then slices the holdout by forecast-origin date
     (wf_hold.index >= holdout_start_date).
     """
-    wf_df = df.loc[df[COLS.RV20_FWD_VAR].notna()].copy()
+    wf_df = df.loc[df[COLS.RVAR_FWD].notna()].copy()
 
     wf_df["har_daily_wf_forecast_var"] = forecasts["har_daily"].reindex(wf_df.index)
     wf_df["xgb_har_wf_mean_var"] = forecasts["xgb_har_mean"].reindex(wf_df.index)
@@ -254,7 +254,7 @@ def compute_eval_panels(
     """
     availability = availability_summary_holdout(
         wf_hold,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         baseline_var_col=baseline_col,
         model_var_cols=model_cols_headline,
     )
@@ -262,7 +262,7 @@ def compute_eval_panels(
     headline_full = pairwise_headline_table(
         wf_hold,
         segment="HOLDOUT_full",
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         baseline_var_col=baseline_col,
         model_var_cols=model_cols_headline,
         include_rmse_vol=True,
@@ -275,7 +275,7 @@ def compute_eval_panels(
     headline_half1 = pairwise_headline_table(
         h1,
         segment="HOLDOUT_half1",
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         baseline_var_col=baseline_col,
         model_var_cols=model_cols_headline,
         include_rmse_vol=True,
@@ -284,7 +284,7 @@ def compute_eval_panels(
     headline_half2 = pairwise_headline_table(
         h2,
         segment="HOLDOUT_half2",
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         baseline_var_col=baseline_col,
         model_var_cols=model_cols_headline,
         include_rmse_vol=True,
@@ -296,7 +296,7 @@ def compute_eval_panels(
     ]
     xgb_sanity = report_xgb_mean_median_sanity(
         wf_hold,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         baseline_var_col=baseline_col,
         pairs=xgb_pairs,
         min_n=150,
@@ -304,7 +304,7 @@ def compute_eval_panels(
 
     calibration = calibration_spearman_holdout(
         wf_hold,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         model_var_cols=model_cols_headline,
         min_n=200,
     )
@@ -312,11 +312,11 @@ def compute_eval_panels(
     # DM policy: we compute DM(model vs baseline) on the overlap of (target, baseline, model) for each model.
     # The DM panel reports the effective sample size `n` per model; if `n` varies materially across models,
     # a common-sample policy (intersection across all models) could be considered instead.
-    wf_hold_dm_base = wf_hold.dropna(subset=[COLS.RV20_FWD_VAR, baseline_col])
+    wf_hold_dm_base = wf_hold.dropna(subset=[COLS.RVAR_FWD, baseline_col])
 
     dm = dm_panel_qlike_vs_baseline_holdout(
         wf_hold_dm_base,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         model_var_cols=[c for c in model_cols_headline if c != baseline_col],
         baseline_var_col=baseline_col,
         hac_lag_grid=hac_lag_grid,

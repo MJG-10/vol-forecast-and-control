@@ -90,9 +90,9 @@ def add_log_features_for_daily_har(
 
 
 def add_log_target_var(df: pd.DataFrame, target_var_col: str, eps: float = 1e-18) -> pd.DataFrame:
-    """Add `COLS.LOG_TARGET_VAR` = log(target_var_col) after clipping at `eps` for numerical stability."""
+    """Add `COLS.LOG_RVAR_FWD` = log(target_var_col) after clipping at `eps` for numerical stability."""
     df = df.copy()
-    df[COLS.LOG_TARGET_VAR] = np.log(df[target_var_col].clip(lower=eps))
+    df[COLS.LOG_RVAR_FWD] = np.log(df[target_var_col].clip(lower=eps))
     return df
 
 
@@ -103,7 +103,6 @@ def build_core_features(
     horizon: int,
     vix_close: pd.Series,
     freq: int = 252,
-    trailing_window: int = 20,
     eps_log: float = 1e-18
 ) -> pd.DataFrame:
     """
@@ -120,16 +119,16 @@ def build_core_features(
     out[COLS.DAILY_VAR] = compute_daily_var_close(out, ret_col=ret_col)
 
     # 2) Trailing realized variance + forward target variance
-    out[COLS.RV20_VAR] = compute_trailing_annualized_var(
-        out[COLS.DAILY_VAR], window=int(trailing_window), freq=int(freq)
+    out[COLS.RVAR_TRAIL] = compute_trailing_annualized_var(
+        out[COLS.DAILY_VAR], window=int(horizon), freq=int(freq)
     )
-    out[COLS.RV20_FWD_VAR] = compute_forward_annualized_var(
+    out[COLS.RVAR_FWD] = compute_forward_annualized_var(
         out[COLS.DAILY_VAR], horizon=int(horizon), freq=int(freq)
     )
 
     # 3) Baselines (t-1 aligned)
     out = add_baseline_forecasts_var_tminus1(
-        out, trailing_var_col=COLS.RV20_VAR
+        out, trailing_var_col=COLS.RVAR_TRAIL
     )
 
     # 4) HAR features (t-1 aligned) + log transforms
@@ -139,7 +138,7 @@ def build_core_features(
     out = add_log_features_for_daily_har(out, eps=float(eps_log))
 
     # 5) Log target
-    out = add_log_target_var(out, target_var_col=COLS.RV20_FWD_VAR, eps=float(eps_log))
+    out = add_log_target_var(out, target_var_col=COLS.RVAR_FWD, eps=float(eps_log))
 
     # 6) VIX features
     out = add_vix_features_tminus1(out, vix_close=vix_close)
