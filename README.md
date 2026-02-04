@@ -7,7 +7,7 @@ The objective is to compare the volatility forecasts of econometric and machine 
 ## What we test specifically 
 
 - **Target**: forward realized variance over horizon $h$ (annualized; $h = 20$ trading days here). 
-Let $r_t = \log(P_t / P_{t-1})$ is the daily log return and $f$ is the annualization factor (usually 252).
+Let $r_t = \log(P_t / P_{t-1})$ be the daily log return and $f$ be the annualization factor (usually 252). The target is: 
 
 $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$$
 
