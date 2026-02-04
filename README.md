@@ -11,8 +11,8 @@ Let $r_t = \log(P_t / P_{t-1})$ be the daily log return and $f$ be the annualiza
 
 $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$$
 
-- **Timing convention**: at forecast origin **t**, predictors use information available by the close of **t-1** (no look-ahead).
-  The target is aligned back onto **t** (forward window **t .. t+h-1**). Strategy execution can optionally apply an extra delay via `execution_lag_days`.
+- **Timing convention**: at forecast origin $t$, predictors use information available by the close of $t-1$ (no look-ahead).
+  The target is aligned back onto $t$ (forward window $t,\ldots,t+h-1$). Strategy execution can optionally apply an extra delay via `execution_lag_days`.
 - **Experiment design**: walk-forward training with a fixed holdout segment for headline comparisons.
 - **Models**: HAR-type models, GARCH variants (including GJR-GARCH) and XGBoost-based forecasters (HAR-only and HAR+VIX variants).
 - **Baseline**: Random-walk baseline on variance.
