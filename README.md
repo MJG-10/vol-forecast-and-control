@@ -6,11 +6,10 @@ The objective is to compare the volatility forecasts of econometric and machine 
 
 ## What we test specifically 
 
-- **Target**: forward realized variance over horizon $h$ (annualized; $h = 20$ trading days here).
-<br>
+- **Target**: forward realized variance over horizon $h$ (annualized; $h = 20$ trading days here). 
+Let $r_t = \log(P_t / P_{t-1})$ is the daily log return and $f$ is the annualization factor (usually 252).
+
 $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$$
-<br>
-where $r_t = \log(P_t / P_{t-1})$ is the daily log return and $f$ is the annualization factor (usually 252).
 
 - **Timing convention**: at forecast origin **t**, predictors use information available by the close of **t-1** (no look-ahead).
   The target is aligned back onto **t** (forward window **t .. t+h-1**). Strategy execution can optionally apply an extra delay via `execution_lag_days`.
