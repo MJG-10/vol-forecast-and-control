@@ -58,3 +58,11 @@ Thumbs.db
 # Secrets / local config
 .env
 .env.*
+
+# Visual Studio
+.vs/
+*.sln
+*.pyproj
+*.user
+*.suo
+
