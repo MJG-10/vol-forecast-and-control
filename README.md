@@ -1,6 +1,6 @@
 # vol-forecast-and-control
 
-In this project we implement a walk-forward experiment to forecast volatility for equity index returns (default here is S&P 500 Total Return). We evaluate multiple models using loss-based diagnostics during a holdout period and also feed these forecasts into an optional volatility-targeting backtest with transaction cost sensitivity.
+In this project we implement a walk-forward experiment to forecast volatility for equity index returns (default here is S&P 500 Total Return). We evaluate multiple models using loss-based diagnostics during a holdout period and also feed these forecasts into an optional volatility-control backtest with transaction cost sensitivity.
 
 The objective is to compare the volatility forecasts of econometric and machine learning models against simple baselines.
 
@@ -17,7 +17,7 @@ $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$
 - **Models**: HAR-type models, GARCH variants (including GJR-GARCH) and XGBoost-based forecasters (HAR-only and HAR+VIX variants).
 - **Baseline**: Random-walk baseline on variance.
 - **Diagnostics**: Loss-based evaluation (RMSE on volatility, QLIKE on variance) and Diebold–Mariano (DM) tests across multiple HAC lags. Headline comparisons are based on QLIKE and RMSE, and DM tests are added for context.
-- **Backtest (optional)**: a volatility-targeting backtest driven by the forecasts and evaluated across a grid of transaction costs. This requires a cash return series and can report multiple execution variants (daily with turnover buffer or tranche-style rebalancing). Execution timing is controlled via `execution_lag_days` (an extra lag beyond the t-1 predictor alignment).
+- **Backtest (optional)**: a volatility-control backtest driven by the forecasts and evaluated across a grid of transaction costs. This requires a cash return series and can report multiple execution variants (daily with turnover buffer or tranche-style rebalancing). Execution timing is controlled via `execution_lag_days` (an extra lag beyond the t-1 predictor alignment).
 
 
 ## Results
