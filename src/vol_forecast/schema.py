@@ -45,7 +45,7 @@ class Cols:
     CASH_R: str = "cash_r_act360"
 
     # Baseline
-    RW_FORECAST_VAR: str = "rw_forecast_RV"
+    RW_FORECAST_VAR: str = "rw_forecast_VAR"
 
     # HAR
     DVHAR_1D: str = "dvhar_1d"
