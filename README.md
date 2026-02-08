@@ -16,7 +16,7 @@ $$\mathrm{RVar}_{\mathrm{fwd,ann}}(t;h) = \frac{f}{h}\sum_{k=0}^{h-1} r_{t+k}^2$
 - **Experiment design**: walk-forward training with a fixed holdout segment for headline comparisons.
 - **Models**: HAR-type models, GARCH variants (including GJR-GARCH) and XGBoost-based forecasters (HAR-only and HAR+VIX variants).
 - **Baseline**: Random-walk baseline on variance.
-- **Diagnostics**: Loss-based evaluation (RMSE on volatility, QLIKE on variance) and Diebold–Mariano (DM) tests across multiple HAC lags. Headline comparisons are based on QLIKE and RMSE, and DM tests are added for context.
+- **Diagnostics**: Loss-based evaluation (QLIKE on variance; RMSE on volatility) and Diebold–Mariano (DM) tests vs baseline using HAC standard errors across a lag grid (sensitivity check). Headline comparisons use QLIKE (primary) and RMSE (supporting); DM results are reported for context.
 - **Backtest (optional)**: a volatility-control backtest driven by the forecasts and evaluated across a grid of transaction costs. This requires a cash return series and can report multiple execution variants (daily with turnover buffer or tranche-style rebalancing). Execution timing is controlled via `execution_lag_days` (an extra lag beyond the t-1 predictor alignment).
 
 
