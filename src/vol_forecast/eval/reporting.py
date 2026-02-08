@@ -251,9 +251,7 @@ def spearman_rank_vol_holdout(
 ) -> pd.DataFrame:
     """
     Ranks models on HOLDOUT by Spearman rank correlation on the volatility scale.
-
     Computes Spearman corr(sqrt(target_var), sqrt(model_var)) per model column.
-    This is a rank/association diagnostic (monotonic co-movement), not level calibration.
     """
     rows = []
     for c in model_var_cols:
