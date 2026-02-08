@@ -242,7 +242,7 @@ def report_xgb_mean_median_sanity(
     return out
 
 
-def calibration_spearman_holdout(
+def spearman_rank_vol_holdout(
     df_hold: pd.DataFrame,
     *,
     target_var_col: str,
@@ -250,9 +250,10 @@ def calibration_spearman_holdout(
     min_n: int = 200,
 ) -> pd.DataFrame:
     """
-    Ranks calibration on holdout via Spearman correlation on volatility scale.
+    Ranks models on HOLDOUT by Spearman rank correlation on the volatility scale.
 
     Computes Spearman corr(sqrt(target_var), sqrt(model_var)) per model column.
+    This is a rank/association diagnostic (monotonic co-movement), not level calibration.
     """
     rows = []
     for c in model_var_cols:
@@ -261,14 +262,14 @@ def calibration_spearman_holdout(
         sub = df_hold[[target_var_col, c]].dropna()
         n = int(len(sub))
         if n < min_n:
-            rows.append({"model": c, "n": n, "spearman_vol": np.nan})
+            rows.append({"model": c, "n": n, "spearman_rank_vol": np.nan})
             continue
         r_vol = np.sqrt(np.clip(sub[target_var_col].astype(float).values, 0.0, None))
         f_vol = np.sqrt(np.clip(sub[c].astype(float).values, 0.0, None))
         spearman = float(pd.Series(f_vol).corr(pd.Series(r_vol), method="spearman"))
-        rows.append({"model": c, "n": n, "spearman_vol": spearman})
+        rows.append({"model": c, "n": n, "spearman_rank_vol": spearman})
 
     out = pd.DataFrame(rows)
     if len(out):
-        out = out.sort_values(["spearman_vol"], ascending=[False]).reset_index(drop=True)
+        out = out.sort_values(["spearman_rank_vol"], ascending=[False]).reset_index(drop=True)
     return out

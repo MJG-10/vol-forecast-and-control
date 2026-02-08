@@ -13,7 +13,7 @@ from vol_forecast.eval.reporting import (availability_summary_holdout,
                                          pairwise_headline_table,
                                          split_holdout_into_halves,
                                          report_xgb_mean_median_sanity,
-                                         calibration_spearman_holdout)
+                                         spearman_rank_vol_holdout)
 from vol_forecast.eval.dm import dm_panel_qlike_vs_baseline_holdout
 from vol_forecast.eval.data_quality import build_core_data_diagnostics 
 from vol_forecast.df_utils import safe_cols
@@ -302,7 +302,7 @@ def compute_eval_panels(
         min_n=150,
     )
 
-    calibration = calibration_spearman_holdout(
+    rank_corr = spearman_rank_vol_holdout(
         wf_hold,
         target_var_col=COLS.RVAR_FWD,
         model_var_cols=model_cols_headline,
@@ -330,6 +330,6 @@ def compute_eval_panels(
         "headline_half2": headline_half2,
         "split_mid": mid,
         "xgb_sanity": xgb_sanity,
-        "calibration": calibration,
+        "spearman_rank_vol": rank_corr,
         "dm": dm,
     }

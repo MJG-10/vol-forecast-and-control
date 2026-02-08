@@ -130,7 +130,7 @@ def compute_experiment_report(
         "headline_half2": panels["headline_half2"],
         "split_mid": panels["split_mid"],
         "xgb_sanity": panels["xgb_sanity"],
-        "calibration": panels["calibration"],
+        "spearman_rank_vol": panels["spearman_rank_vol"],
         "dm": panels["dm"],
         "strategy": strat_df,
         "meta": meta,
