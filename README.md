@@ -28,6 +28,12 @@ The primary output of this repository is the results notebook, which contains th
 
 The source code in `src/vol_forecast/` is structured to keep the notebook thin and make refactoring convenient. 
 
+**Illustrative findings (with default config in the notebook):**
+- On HOLDOUT in this run, the GARCH-family (GARCH/GJR) delivers the strongest average QLIKE improvements versus the RW variance baseline, with HAR improving by a smaller margin.
+- XGB variants can be strongly regime-dependent: improvements (when present) may concentrate in sub-periods rather than appearing as a stable gain over the full HOLDOUT.
+- In the vol-control backtest, transaction costs reshuffle rankings through turnover; lower-turnover rebalancing rules (e.g., `band_no_trade`) retain more net performance under costs, with RW + `band_no_trade` taking the top spot at 25 bps in this run.
+
+
 ## Installation
 
 From the repository root:
