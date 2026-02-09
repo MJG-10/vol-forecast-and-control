@@ -52,7 +52,7 @@ def main_runner(
 def main() -> None:
     """Entry point for running the experiment with the default parameters."""
     
-    horizon = 22
+    horizon = 20
 
     wf_cfg = WalkForwardConfig(
         window_type="rolling",
