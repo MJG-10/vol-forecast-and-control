@@ -62,7 +62,7 @@ def main() -> None:
     )
   
     data_start_date = "2004-01-01"
-    data_end_date = None
+    data_end_date = "2026-02-06"
     holdout_start_date = "2015-01-01"
 
     run_strategy = True
