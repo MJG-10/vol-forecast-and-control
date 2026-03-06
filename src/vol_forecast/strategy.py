@@ -125,7 +125,7 @@ def simulate_vol_control_strategy(
 
 
 def compute_strategy_stats(log_rets: pd.Series, freq: int = 252) -> dict[str, float]:
-    """Computes annualized performance and drawdown stats from log returns."""
+    """Computes annualized performance and drawdown stats from strategy log returns."""
     log_rets = log_rets.dropna()
     n = int(len(log_rets))
     if n == 0:
@@ -139,12 +139,14 @@ def compute_strategy_stats(log_rets: pd.Series, freq: int = 252) -> dict[str, fl
         }
 
     mean = float(log_rets.mean())
-    std = float(log_rets.std(ddof=1))
+    simple_rets = np.expm1(log_rets)
+    mean_simple = float(simple_rets.mean())
+    std_simple = float(simple_rets.std(ddof=1))
 
     ann_log_ret = freq * mean
     ann_simple_ret = float(np.expm1(ann_log_ret))
-    ann_vol = math.sqrt(freq) * std
-    sharpe = ann_log_ret / ann_vol if ann_vol > 0 else float("nan")
+    ann_vol = math.sqrt(freq) * std_simple
+    sharpe = (mean_simple / std_simple) * math.sqrt(freq) if std_simple > 0 else float("nan")
 
     equity = np.exp(log_rets.cumsum())
     peak = equity.cummax()
