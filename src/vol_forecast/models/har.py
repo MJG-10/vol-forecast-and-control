@@ -3,8 +3,8 @@ import pandas as pd
 from vol_forecast.wf_config import WalkForwardConfig
 from vol_forecast.schema import require_cols
 from .wf_util import (get_train_slice,
-                      compute_start_pos,
-                      compute_train_end_excl)
+                       compute_start_pos,
+                       compute_train_end_excl)
 import statsmodels.api as sm
 
 
@@ -35,7 +35,7 @@ def walk_forward_log_har_var_generic(
     out_name: str,
     cfg: WalkForwardConfig|None = None,
     start_date: pd.Timestamp | None = None,
-) -> pd.Series:
+) -> tuple[pd.Series, dict[str, int]]:
     """
     Walk-forward HAR regression on a log-variance target.
 
@@ -47,6 +47,8 @@ def walk_forward_log_har_var_generic(
 
     Maps log forecasts to variance via the lognormal mean: exp(mu + 0.5 * sigma2), where sigma2 is the
     OLS residual variance (mse_resid) on the log-target scale for the current training window.
+
+    Returns (forecast_series, diagnostics) where diagnostics summarize refit outcomes.
     """
     cfg = cfg or WalkForwardConfig()
     out = pd.Series(index=df.index, dtype=float, name=out_name)
@@ -63,6 +65,8 @@ def walk_forward_log_har_var_generic(
         origin_start_date=start_date,
     )
     model, sigma2 = None, 0.0
+    refit_attempts = 0
+    refit_failures = 0
 
     for pos in range(start_pos, n2):
         train_end_excl = compute_train_end_excl(pos, horizon=horizon)
@@ -75,14 +79,17 @@ def walk_forward_log_har_var_generic(
             required_min = cfg.initial_train_size if cfg.window_type == "expanding" else cfg.min_train_size
 
             if len(train) >= required_min:
+                refit_attempts += 1
                 try:
                     new_model, new_sigma2 = fit_log_har_var_generic(
                         train, feature_cols=feature_cols, y_col=target_log_col
                     )
                     if np.isfinite(new_sigma2) and new_sigma2 >= 0.0:
                         model, sigma2 = new_model, float(new_sigma2)
-                except Exception:
-                    pass
+                    else:
+                        refit_failures += 1
+                except (ValueError, np.linalg.LinAlgError):
+                    refit_failures += 1
 
         if model is None:
             continue
@@ -90,4 +97,9 @@ def walk_forward_log_har_var_generic(
         row = df2.iloc[[pos]]
         pred = predict_log_har_var_generic(row, model, sigma2, feature_cols=feature_cols).iloc[0]
         out.loc[df2.index[pos]] = float(pred)
-    return out
+
+    diag = {
+        "refit_attempts": int(refit_attempts),
+        "refit_failures": int(refit_failures),
+    }
+    return out, diag

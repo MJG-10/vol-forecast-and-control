@@ -34,6 +34,8 @@ def build_experiment_df(
 
     horizon/freq define the forward realized variance target; predictors are aligned
     to t-1 (information available by close of t-1 at forecast origin t).
+
+    Returns (df, meta) where meta includes build diagnostics used for sanity checks.
     """
     # 1) Returns
     label = "S&P 500 TOTAL RETURN"
@@ -92,15 +94,15 @@ def fit_forecasts(
     garch_dist: str,
     holdout_start_date: str | None = None,
     xgb_params_overrides: dict[str, object] | None = None,
-) -> dict[str, pd.Series]:
+) -> tuple[dict[str, pd.Series], pd.DataFrame]:
     """
-    Fits walk-forward forecast models and returns a dict of forecast variance series
-    aligned to `df.index` (HAR, XGB(HAR), XGB(HAR+VIX), GARCH, GJR for example).
+    Fits walk-forward forecast models and returns (forecast_dict, fit_diagnostics).
     """
     forecasts: dict[str, pd.Series] = {}
+    fit_diag_rows: list[dict[str, object]] = []
 
     # HAR
-    har_daily = walk_forward_log_har_var_generic(
+    har_daily, har_diag = walk_forward_log_har_var_generic(
         df=df,
         feature_cols=list(COLS.HAR_LOG_FEATURES),
         target_log_col=COLS.LOG_RVAR_FWD,
@@ -109,8 +111,10 @@ def fit_forecasts(
         out_name="har_daily_wf_forecast_var",
         cfg=cfg,
         start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
-    ).reindex(df.index)
+    )
+    har_daily = har_daily.reindex(df.index)
     forecasts["har_daily"] = har_daily
+    fit_diag_rows.append({"model": "har_daily", **har_diag})
 
     # XGB (HAR)
     xgb_har_med, xgb_har_mean = walk_forward_xgb_logtarget_var(
@@ -152,7 +156,7 @@ def fit_forecasts(
     forecasts["xgb_harvix_mean"] = xgb_harvix_mean
    
     # GARCH
-    garch_var = walk_forward_garch_family_var(
+    garch_var, garch_diag = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
             kind="garch",
@@ -163,9 +167,10 @@ def fit_forecasts(
             start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
         )
     garch_var = garch_var.reindex(df.index)
+    fit_diag_rows.append({"model": "garch_var", **garch_diag})
 
     # GJR-GARCH
-    gjr_var = walk_forward_garch_family_var(
+    gjr_var, gjr_diag = walk_forward_garch_family_var(
             df=df,
             ret_col=active_ret_col,
             kind="gjr",
@@ -176,11 +181,21 @@ def fit_forecasts(
             start_date= pd.Timestamp(holdout_start_date) if holdout_start_date else None,
         )
     gjr_var = gjr_var.reindex(df.index)
+    fit_diag_rows.append({"model": "gjr_var", **gjr_diag})
 
     forecasts["garch_var"] = garch_var
     forecasts["gjr_var"] = gjr_var
 
-    return forecasts
+    fit_diag = pd.DataFrame(fit_diag_rows)
+    if not fit_diag.empty:
+        fit_diag = fit_diag[
+            [
+                "model",
+                "refit_attempts",
+                "refit_failures",
+            ]
+        ]
+    return forecasts, fit_diag
 
 
 def build_wf_hold_panel(

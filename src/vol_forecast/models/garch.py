@@ -49,7 +49,7 @@ def walk_forward_garch_family_var(
     ret_scale: float = 100.0,
     dist: Literal["normal", "t"] = "t",
     start_date: pd.Timestamp | None = None,
-) -> pd.Series:
+) -> tuple[pd.Series, dict[str, int]]:
     """
     Walk-forward variance forecasts from GARCH(1,1) / GJR-GARCH(1,1).
 
@@ -64,6 +64,8 @@ def walk_forward_garch_family_var(
         (ab >= 1 - tol_ab), writes NaN and does not update state for that step.
 
     GJR multi-step recursion assumes symmetric innovations, using P(eps < 0) = 0.5 in ab.
+
+    Returns (forecast_series, diagnostics) where diagnostics summarize refit outcomes.
     """
     if dist not in ("t", "normal"):
         raise ValueError(f"dist must be 'normal' or 't'.")
@@ -93,6 +95,8 @@ def walk_forward_garch_family_var(
     omega = alpha = beta = gamma = None
     h_prev = None
     eps_prev = None
+    refit_attempts = 0
+    refit_failures = 0
 
     # assumes symmetric innovations for GJR horizon recursion (E[I{eps<0}])
     P_NEG_IMPLIED = 0.5
@@ -108,6 +112,7 @@ def walk_forward_garch_family_var(
             required_min = cfg.initial_train_size if cfg.window_type == "expanding" else cfg.min_train_size
 
             if len(train) >= required_min:
+                refit_attempts += 1
                 am = arch_model(
                     train,
                     mean="Zero",
@@ -121,11 +126,13 @@ def walk_forward_garch_family_var(
 
                 try:
                     res = am.fit(disp="off")
-                except Exception:
+                except (ValueError, FloatingPointError, RuntimeError, np.linalg.LinAlgError):
                     res = None
+                    refit_failures += 1
                 else:
                     if getattr(res, "convergence_flag", 0) != 0:
                         res = None
+                        refit_failures += 1
 
                 if res is not None:
                     cand = _build_refit_candidate(
@@ -138,7 +145,9 @@ def walk_forward_garch_family_var(
                     if cand is not None:
                         omega, alpha, beta, gamma, h_prev, eps_prev = cand
                         fitted = True
-                                        
+                    else:
+                        refit_failures += 1
+                                         
         if not fitted:
             continue
 
@@ -164,4 +173,9 @@ def walk_forward_garch_family_var(
         if pos < n2 - 1:
             eps_prev = float(returns.iloc[pos])
             h_prev = float(h_t)
-    return out
+
+    diag = {
+        "refit_attempts": int(refit_attempts),
+        "refit_failures": int(refit_failures),
+    }
+    return out, diag

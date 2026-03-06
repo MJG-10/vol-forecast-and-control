@@ -35,7 +35,8 @@ def compute_experiment_report(
     `execution_lag_days` affects only strategy timing (not model fitting).
     `hac_lag_grid` affects DM standard errors/inference, not the loss differential itself.
 
-    Returns a report dict with headline tables, DM panels, diagnostics, and optional strategy results.
+    Returns a report dict with headline tables, DM panels, aggregated fit diagnostics,
+    and optional strategy results.
     """
     cfg = wf_cfg
 
@@ -52,7 +53,7 @@ def compute_experiment_report(
 
  
     # Walk-forward forecasts
-    forecasts = fit_forecasts(
+    forecasts, fit_diag = fit_forecasts(
         df,
         cfg=cfg,
         horizon=horizon,
@@ -132,6 +133,7 @@ def compute_experiment_report(
         "xgb_sanity": panels["xgb_sanity"],
         "spearman_rank_vol": panels["spearman_rank_vol"],
         "dm": panels["dm"],
+        "fit_diag": fit_diag,
         "strategy": strat_df,
         "meta": meta,
     }

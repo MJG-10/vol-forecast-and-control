@@ -21,6 +21,13 @@ def print_df(df: pd.DataFrame, float_fmt: str = ".6g") -> None:
     print(df.to_string(index=False, float_format=lambda x: format(x, float_fmt)))
 
 
+def _has_fit_diag_issues(fit_diag: pd.DataFrame) -> bool:
+    """True if aggregated fit diagnostics show refit failures."""
+    if fit_diag is None or fit_diag.empty:
+        return False
+    return bool((fit_diag["refit_failures"].fillna(0.0).to_numpy() > 0).any())
+
+
 def _print_kv(d: dict[str, object], *, keys: list[str]) -> None:
     for k in keys:
         if k in d:
@@ -123,6 +130,11 @@ def console_report(report: dict[str, object]) -> None:
     print("Note: DM is for context. Focus is on sign/magnitude stability across HAC lags (not on any single p-value).")
     print_df(report["dm"])
 
+    fit_diag = report.get("fit_diag")
+    if isinstance(fit_diag, pd.DataFrame) and _has_fit_diag_issues(fit_diag):
+        print_section("MODEL FIT DIAGNOSTICS")
+        print_df(fit_diag)
+
     strat = report["strategy"]
     if strat is not None:
         print_section("STRATEGY BACKTEST (HOLDOUT): COMPACT COST GRID")
@@ -165,6 +177,9 @@ def save_report_csvs(report: dict[str, object], *, out_dir: Path) -> None:
     report["availability"].to_csv(out_dir / "availability_holdout.csv", index=False)
     report["spearman_rank_vol"].to_csv(out_dir / "spearman_rank_vol_holdout.csv", index=False)
     report["xgb_sanity"].to_csv(out_dir / "xgb_mean_vs_median_sanity_holdout.csv", index=False)
+    fit_diag = report.get("fit_diag")
+    if isinstance(fit_diag, pd.DataFrame) and not fit_diag.empty:
+        fit_diag.to_csv(out_dir / "fit_diagnostics.csv", index=False)
 
     # Holdout diagnostics (always present in current pipeline)
     dd = report["data_diag"]
