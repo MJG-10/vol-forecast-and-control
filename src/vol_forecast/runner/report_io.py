@@ -78,7 +78,7 @@ def console_report(report: dict[str, object]) -> None:
     if "build_meta" in report:
         console_build_meta(report["build_meta"])
 
-    print_section(f"EXPERIMENT: {meta['label']}")
+    print_section("EXPERIMENT")
     _print_kv(meta, keys=["horizon", "freq", "holdout_start_date", "hac_lag_grid"])
     
     print("wf_cfg:", meta["wf_cfg"])
@@ -116,8 +116,8 @@ def console_report(report: dict[str, object]) -> None:
     print("Interpretation: mean-correction helps if QLIKE(mean) < QLIKE(median) and d_qlike(mean-median) < 0.")
     print_df(report["xgb_sanity"])
 
-    print_section("CALIBRATION MONOTONICITY (HOLDOUT): SPEARMAN corr(forecast vol, realized vol)")
-    print_df(report["calibration"])
+    print_section("RANK MONOTONICITY (HOLDOUT): SPEARMAN corr(forecast vol, realized vol)")
+    print_df(report["spearman_rank_vol"])
 
     print_section(f"DM VS baseline='{baseline_col}' ON HOLDOUT (overlap daily) | HAC grid={meta['hac_lag_grid']}")
     print("Note: DM is for context. Focus is on sign/magnitude stability across HAC lags (not on any single p-value).")
@@ -132,17 +132,16 @@ def console_report(report: dict[str, object]) -> None:
 def plot_report(report: dict[str, object], *, n: int = 500) -> None:
     """Plots the holdout tail comparison in Vol space for headline columns."""
     wf_hold: pd.DataFrame = report["wf_hold"]
-    meta: dict[str, object] = report["meta"]
     model_cols_headline: list[str] = report["model_cols_headline"]
 
     if len(wf_hold) == 0:
         return
 
-    title = f"{meta['label']}: HOLDOUT tail (VOL space)".strip(": ")
+    title = f"S&P 500 Total Return: Last {n} Holdout Observations (Volatility Scale)"
 
     plot_tail_vol(
         wf_hold,
-        target_var_col=COLS.RV20_FWD_VAR,
+        target_var_col=COLS.RVAR_FWD,
         forecast_var_cols=safe_cols(wf_hold, model_cols_headline),
         n=n,
         title=title,
@@ -164,7 +163,7 @@ def save_report_csvs(report: dict[str, object], *, out_dir: Path) -> None:
     # Holdout/run artifacts
     report["dm"].to_csv(out_dir / "dm_vs_baseline_holdout.csv", index=False)
     report["availability"].to_csv(out_dir / "availability_holdout.csv", index=False)
-    report["calibration"].to_csv(out_dir / "calibration_holdout.csv", index=False)
+    report["spearman_rank_vol"].to_csv(out_dir / "spearman_rank_vol_holdout.csv", index=False)
     report["xgb_sanity"].to_csv(out_dir / "xgb_mean_vs_median_sanity_holdout.csv", index=False)
 
     # Holdout diagnostics (always present in current pipeline)

@@ -247,7 +247,7 @@ def compute_eval_panels(
     hac_lag_grid: list[int] | None,
 ) -> dict[str, Any]:
     """
-    Computes holdout evaluation panels (availability, headline tables, calibration, XGB sanity, DM vs baseline).
+    Computes holdout evaluation panels (availability, headline tables, rank monotonicity, XGB sanity, DM vs baseline).
 
     `hac_lag_grid` controls HAC variance estimation used for DM t-stats/p-values; it does not change the
     underlying loss differential series, only the inference.
