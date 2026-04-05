@@ -34,32 +34,29 @@ The source code in `src/vol_forecast/` is structured to keep the notebook thin a
 - In the vol-control backtest, transaction costs reshuffle rankings through turnover; lower-turnover rebalancing rules (e.g., `band_no_trade`) retain more net performance under costs, with RW + `band_no_trade` taking the top spot at 25 bps in this run.
 
 
-## Installation
-
-From the repository root:
-
-**Standard install:**
+## Quickstart
 
 ```bash
-pip install -e .
+git clone https://github.com/MJG-10/vol-forecast-and-control.git
+cd vol-forecast-and-control
+python -m venv .venv
 ```
 
-**Full pipeline dependencies (data sources + models + plotting):**
+**Activate the virtual environment**
 
-```bash
-pip install -e ".[full]"
+```powershell
+. .\.venv\Scripts\Activate.ps1
 ```
 
-**Notebook tooling:**
-
 ```bash
-pip install -e ".[dev]"
+source .venv/bin/activate
 ```
 
-**Full pipeline + notebook tooling**
+**Install**
 
 ```bash
-pip install -e ".[full,dev]"
+python -m pip install --upgrade pip
+python -m pip install -e ".[full,dev]"
 ```
 
 ## How to run
@@ -117,5 +114,3 @@ Equity index series: Loaded from Yahoo via `yfinance` (default: `^SP500TR`).
 VIX: FRED `VIXCLS` (via `pandas_datareader`).
 
 Cash proxy: FRED `DFF` spliced/overwritten with `EFFR` when available, converted to per-period simple returns using ACT/360 conventions and aligned with a 1-trading-day lag.
-
-
